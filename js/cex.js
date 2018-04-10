@@ -18,9 +18,9 @@ module.exports = class cex extends Exchange {
                 'CORS': true,
                 'fetchTickers': true,
                 'fetchOHLCV': true,
+                'fetchOrder': true,
                 'fetchOpenOrders': true,
                 'fetchClosedOrders': true,
-                'fetchOrders': true,
                 'fetchDepositAddress': true,
             },
             'timeframes': {

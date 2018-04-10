@@ -4,6 +4,7 @@
 
 const Exchange = require ('./base/Exchange');
 const { NotSupported, DDoSProtection, AuthenticationError, ExchangeError, InsufficientFunds, InvalidOrder, OrderNotFound, InvalidNonce } = require ('./base/errors');
+const { ROUND, TRUNCATE, SIGNIFICANT_DIGITS } = require ('./base/functions/number');
 
 //  ---------------------------------------------------------------------------
 
@@ -22,14 +23,13 @@ module.exports = class bitfinex extends Exchange {
                 'deposit': true,
                 'fetchClosedOrders': true,
                 'fetchDepositAddress': true,
-                'fetchFees': true,
+                'fetchTradingFees': true,
                 'fetchFundingFees': true,
                 'fetchMyTrades': true,
                 'fetchOHLCV': true,
                 'fetchOpenOrders': true,
                 'fetchOrder': true,
                 'fetchTickers': true,
-                'fetchTradingFees': true,
                 'withdraw': true,
             },
             'timeframes': {
@@ -245,8 +245,10 @@ module.exports = class bitfinex extends Exchange {
                     'Invalid order: not enough exchange balance for ': InsufficientFunds, // when buying cost is greater than the available quote currency
                     'Invalid order: minimum size for ': InvalidOrder, // when amount below limits.amount.min
                     'Invalid order': InvalidOrder, // ?
+                    'The available balance is only': InsufficientFunds, // {"status":"error","message":"Cannot withdraw 1.0027 ETH from your exchange wallet. The available balance is only 0.0 ETH. If you have limit orders, open positions, unused or active margin funding, this will decrease your available balance. To increase it, you can cancel limit orders or reduce/close your positions.","withdrawal_id":0,"fees":"0.0027"}
                 },
             },
+            'precisionMode': SIGNIFICANT_DIGITS,
         });
     }
 
@@ -280,23 +282,6 @@ module.exports = class bitfinex extends Exchange {
             'maker': this.safeFloat (response, 'maker_fee'),
             'taker': this.safeFloat (response, 'taker_fee'),
         };
-    }
-
-    async loadFees () {
-        // // PHP does flat copying for arrays
-        // // setting fees on the exchange instance isn't portable, unfortunately...
-        // // this should probably go into the base class as well
-        // let funding = this.fees['funding'];
-        // const fees = await this.fetchFundingFees ();
-        // funding = this.deepExtend (funding, fees);
-        // return funding;
-        throw new NotSupported (this.id + ' loadFees() not implemented yet');
-    }
-
-    async fetchFees () {  // this can be removed since it is now dealt with in the base class
-        let fundingFees = await this.fetchFundingFees ();
-        let tradingFees = await this.fetchTradingFees ();
-        return this.deepExtend (fundingFees, tradingFees);
     }
 
     async fetchMarkets () {
@@ -338,11 +323,39 @@ module.exports = class bitfinex extends Exchange {
                 'active': true,
                 'precision': precision,
                 'limits': limits,
-                'lot': Math.pow (10, -precision['amount']),
                 'info': market,
             });
         }
         return result;
+    }
+
+    costToPrecision (symbol, cost) {
+        return this.decimalToPrecision (cost, ROUND, this.markets[symbol]['precision']['price'], this.precisionMode);
+    }
+
+    priceToPrecision (symbol, price) {
+        return this.decimalToPrecision (price, ROUND, this.markets[symbol]['precision']['price'], this.precisionMode);
+    }
+
+    amountToPrecision (symbol, amount) {
+        return this.decimalToPrecision (amount, TRUNCATE, this.markets[symbol]['precision']['amount'], this.precisionMode);
+    }
+
+    feeToPrecision (currency, fee) {
+        return this.decimalToPrecision (fee, ROUND, this.currencies[currency]['precision'], this.precisionMode);
+    }
+
+    calculateFee (symbol, type, side, amount, price, takerOrMaker = 'taker', params = {}) {
+        let market = this.markets[symbol];
+        let rate = market[takerOrMaker];
+        let cost = amount * price;
+        let key = 'quote';
+        return {
+            'type': takerOrMaker,
+            'currency': market[key],
+            'rate': rate,
+            'cost': parseFloat (this.feeToPrecision (market[key], rate * cost)),
+        };
     }
 
     async fetchBalance (params = {}) {
@@ -454,7 +467,7 @@ module.exports = class bitfinex extends Exchange {
         let cost = price * amount;
         let fee = undefined;
         if ('fee_amount' in trade) {
-            let feeCost = this.safeFloat (trade, 'fee_amount');
+            let feeCost = -this.safeFloat (trade, 'fee_amount');
             let feeCurrency = this.safeString (trade, 'fee_currency');
             if (feeCurrency in this.currencies_by_id)
                 feeCurrency = this.currencies_by_id[feeCurrency]['code'];
@@ -624,6 +637,8 @@ module.exports = class bitfinex extends Exchange {
 
     async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limit = 100, params = {}) {
         await this.loadMarkets ();
+        if (typeof since === 'undefined')
+            since = this.milliseconds () - this.parseTimeframe (timeframe) * limit * 1000;
         let market = this.market (symbol);
         let v2id = 't' + market['id'];
         let request = {
@@ -631,11 +646,9 @@ module.exports = class bitfinex extends Exchange {
             'timeframe': this.timeframes[timeframe],
             'sort': 1,
             'limit': limit,
+            'start': since,
         };
-        if (typeof since !== 'undefined')
-            request['start'] = since;
-        request = this.extend (request, params);
-        let response = await this.v2GetCandlesTradeTimeframeSymbolHist (request);
+        let response = await this.v2GetCandlesTradeTimeframeSymbolHist (this.extend (request, params));
         return this.parseOHLCVs (response, market, timeframe, since, limit);
     }
 
@@ -715,9 +728,12 @@ module.exports = class bitfinex extends Exchange {
             request['payment_id'] = tag;
         let responses = await this.privatePostWithdraw (this.extend (request, params));
         let response = responses[0];
+        let id = response['withdrawal_id'];
+        if (id === 0)
+            throw new ExchangeError (this.id + ' withdraw returned an id of zero: ' + this.json (response));
         return {
             'info': response,
-            'id': response['withdrawal_id'],
+            'id': id,
         };
     }
 

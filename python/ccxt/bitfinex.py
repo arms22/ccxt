@@ -16,6 +16,9 @@ from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import DDoSProtection
 from ccxt.base.errors import InvalidNonce
+from ccxt.base.decimal_to_precision import ROUND
+from ccxt.base.decimal_to_precision import TRUNCATE
+from ccxt.base.decimal_to_precision import SIGNIFICANT_DIGITS
 
 
 class bitfinex (Exchange):
@@ -34,14 +37,13 @@ class bitfinex (Exchange):
                 'deposit': True,
                 'fetchClosedOrders': True,
                 'fetchDepositAddress': True,
-                'fetchFees': True,
+                'fetchTradingFees': True,
                 'fetchFundingFees': True,
                 'fetchMyTrades': True,
                 'fetchOHLCV': True,
                 'fetchOpenOrders': True,
                 'fetchOrder': True,
                 'fetchTickers': True,
-                'fetchTradingFees': True,
                 'withdraw': True,
             },
             'timeframes': {
@@ -257,8 +259,10 @@ class bitfinex (Exchange):
                     'Invalid order: not enough exchange balance for ': InsufficientFunds,  # when buying cost is greater than the available quote currency
                     'Invalid order: minimum size for ': InvalidOrder,  # when amount below limits.amount.min
                     'Invalid order': InvalidOrder,  # ?
+                    'The available balance is only': InsufficientFunds,  # {"status":"error","message":"Cannot withdraw 1.0027 ETH from your exchange wallet. The available balance is only 0.0 ETH. If you have limit orders, open positions, unused or active margin funding, self will decrease your available balance. To increase it, you can cancel limit orders or reduce/close your positions.","withdrawal_id":0,"fees":"0.0027"}
                 },
             },
+            'precisionMode': SIGNIFICANT_DIGITS,
         })
 
     def fetch_funding_fees(self, params={}):
@@ -288,21 +292,6 @@ class bitfinex (Exchange):
             'maker': self.safe_float(response, 'maker_fee'),
             'taker': self.safe_float(response, 'taker_fee'),
         }
-
-    def load_fees(self):
-        #  # PHP does flat copying for arrays
-        #  # setting fees on the exchange instance isn't portable, unfortunately...
-        #  # self should probably go into the base class as well
-        # funding = self.fees['funding']
-        # fees = self.fetch_funding_fees()
-        # funding = self.deep_extend(funding, fees)
-        # return funding
-        raise NotSupported(self.id + ' loadFees() not implemented yet')
-
-    def fetch_fees(self):
-        fundingFees = self.fetch_funding_fees()
-        tradingFees = self.fetch_trading_fees()
-        return self.deep_extend(fundingFees, tradingFees)
 
     def fetch_markets(self):
         markets = self.publicGetSymbolsDetails()
@@ -343,10 +332,33 @@ class bitfinex (Exchange):
                 'active': True,
                 'precision': precision,
                 'limits': limits,
-                'lot': math.pow(10, -precision['amount']),
                 'info': market,
             })
         return result
+
+    def cost_to_precision(self, symbol, cost):
+        return self.decimal_to_precision(cost, ROUND, self.markets[symbol]['precision']['price'], self.precisionMode)
+
+    def price_to_precision(self, symbol, price):
+        return self.decimal_to_precision(price, ROUND, self.markets[symbol]['precision']['price'], self.precisionMode)
+
+    def amount_to_precision(self, symbol, amount):
+        return self.decimal_to_precision(amount, TRUNCATE, self.markets[symbol]['precision']['amount'], self.precisionMode)
+
+    def fee_to_precision(self, currency, fee):
+        return self.decimal_to_precision(fee, ROUND, self.currencies[currency]['precision'], self.precisionMode)
+
+    def calculate_fee(self, symbol, type, side, amount, price, takerOrMaker='taker', params={}):
+        market = self.markets[symbol]
+        rate = market[takerOrMaker]
+        cost = amount * price
+        key = 'quote'
+        return {
+            'type': takerOrMaker,
+            'currency': market[key],
+            'rate': rate,
+            'cost': float(self.fee_to_precision(market[key], rate * cost)),
+        }
 
     def fetch_balance(self, params={}):
         self.load_markets()
@@ -446,7 +458,7 @@ class bitfinex (Exchange):
         cost = price * amount
         fee = None
         if 'fee_amount' in trade:
-            feeCost = self.safe_float(trade, 'fee_amount')
+            feeCost = -self.safe_float(trade, 'fee_amount')
             feeCurrency = self.safe_string(trade, 'fee_currency')
             if feeCurrency in self.currencies_by_id:
                 feeCurrency = self.currencies_by_id[feeCurrency]['code']
@@ -600,6 +612,8 @@ class bitfinex (Exchange):
 
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=100, params={}):
         self.load_markets()
+        if since is None:
+            since = self.milliseconds() - self.parse_timeframe(timeframe) * limit * 1000
         market = self.market(symbol)
         v2id = 't' + market['id']
         request = {
@@ -607,11 +621,9 @@ class bitfinex (Exchange):
             'timeframe': self.timeframes[timeframe],
             'sort': 1,
             'limit': limit,
+            'start': since,
         }
-        if since is not None:
-            request['start'] = since
-        request = self.extend(request, params)
-        response = self.v2GetCandlesTradeTimeframeSymbolHist(request)
+        response = self.v2GetCandlesTradeTimeframeSymbolHist(self.extend(request, params))
         return self.parse_ohlcvs(response, market, timeframe, since, limit)
 
     def get_currency_name(self, currency):
@@ -686,9 +698,12 @@ class bitfinex (Exchange):
             request['payment_id'] = tag
         responses = self.privatePostWithdraw(self.extend(request, params))
         response = responses[0]
+        id = response['withdrawal_id']
+        if id == 0:
+            raise ExchangeError(self.id + ' withdraw returned an id of zero: ' + self.json(response))
         return {
             'info': response,
-            'id': response['withdrawal_id'],
+            'id': id,
         }
 
     def nonce(self):

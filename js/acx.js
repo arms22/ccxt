@@ -145,14 +145,11 @@ module.exports = class acx extends Exchange {
         let request = {
             'market': market['id'],
         };
-        if (typeof limit === 'undefined')
+        if (typeof limit !== 'undefined')
             request['limit'] = limit; // default = 300
         let orderbook = await this.publicGetDepth (this.extend (request, params));
         let timestamp = orderbook['timestamp'] * 1000;
-        let result = this.parseOrderBook (orderbook, timestamp);
-        result['bids'] = this.sortBy (result['bids'], 0, true);
-        result['asks'] = this.sortBy (result['asks'], 0);
-        return result;
+        return this.parseOrderBook (orderbook, timestamp);
     }
 
     parseTicker (ticker, market = undefined) {
@@ -161,26 +158,26 @@ module.exports = class acx extends Exchange {
         let symbol = undefined;
         if (market)
             symbol = market['symbol'];
-        let last = this.safeFloat (ticker, 'last', undefined);
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': this.safeFloat (ticker, 'high', undefined),
-            'low': this.safeFloat (ticker, 'low', undefined),
-            'bid': this.safeFloat (ticker, 'buy', undefined),
+            'high': this.safeFloat (ticker, 'high'),
+            'low': this.safeFloat (ticker, 'low'),
+            'bid': this.safeFloat (ticker, 'buy'),
             'bidVolume': undefined,
-            'ask': this.safeFloat (ticker, 'sell', undefined),
+            'ask': this.safeFloat (ticker, 'sell'),
             'askVolume': undefined,
             'vwap': undefined,
-            'open': undefined,
+            'open': this.safeFloat (ticker, 'open'),
             'close': last,
             'last': last,
             'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
-            'baseVolume': this.safeFloat (ticker, 'vol', undefined),
+            'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
             'info': ticker,
         };
