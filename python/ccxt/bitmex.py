@@ -283,13 +283,19 @@ class bitmex (Exchange):
         ticker = tickers[0]
         timestamp = self.milliseconds()
         if not hasattr(self, 'last_open'):
-            self.last_open = 1
+            self.last_open = ticker['open']
         if not hasattr(self, 'last_close'):
-            self.last_close = 1        
+            self.last_close = ticker['close']
+        if not hasattr(self, 'last_bid'):
+            self.last_bid = quote['bidPrice']
+        if not hasattr(self, 'last_ask'):
+            self.last_ask = quote['askPrice']
         open = self.safe_float(ticker, 'open', self.last_open)
         close = self.safe_float(ticker, 'close', self.last_close)
         self.last_open = open
         self.last_close = close
+        self.last_bid = self.safe_float(quote, 'bidPrice', self.last_bid)
+        self.last_ask = self.safe_float(quote, 'askPrice', self.last_ask)
         change = close - open
         return {
             'symbol': symbol,
@@ -297,9 +303,9 @@ class bitmex (Exchange):
             'datetime': self.iso8601(timestamp),
             'high': self.safe_float(ticker,'high'),
             'low': self.safe_float(ticker,'low'),
-            'bid': self.safe_float(quote,'bidPrice'),
+            'bid': self.last_bid,
             'bidVolume': None,
-            'ask': self.safe_float(quote,'askPrice'),
+            'ask': self.last_ask,
             'askVolume': None,
             'vwap': self.safe_float(ticker,'vwap'),
             'open': open,
