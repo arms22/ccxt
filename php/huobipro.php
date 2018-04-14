@@ -78,6 +78,7 @@ class huobipro extends Exchange {
                         'order/matchresults', // 查询当前成交、历史成交
                         'dw/withdraw-virtual/addresses', // 查询虚拟币提现地址
                         'dw/deposit-virtual/addresses',
+                        'query/deposit-withdraw',
                     ),
                     'post' => array (
                         'order/orders/place', // 创建并执行一个新订单 (一步下单， 推荐使用)
@@ -468,6 +469,8 @@ class huobipro extends Exchange {
     public function parse_order_status ($status) {
         if ($status === 'partial-filled') {
             return 'open';
+        } else if ($status === 'partial-canceled') {
+            return 'canceled';
         } else if ($status === 'filled') {
             return 'closed';
         } else if ($status === 'canceled') {
