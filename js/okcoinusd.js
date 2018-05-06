@@ -253,16 +253,16 @@ module.exports = class okcoinusd extends Exchange {
         }
         if (market)
             symbol = market['symbol'];
-        let last = parseFloat (ticker['last']);
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['high']),
-            'low': parseFloat (ticker['low']),
-            'bid': parseFloat (ticker['buy']),
+            'high': this.safeFloat (ticker, 'high'),
+            'low': this.safeFloat (ticker, 'low'),
+            'bid': this.safeFloat (ticker, 'buy'),
             'bidVolume': undefined,
-            'ask': parseFloat (ticker['sell']),
+            'ask': this.safeFloat (ticker, 'sell'),
             'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
@@ -272,7 +272,7 @@ module.exports = class okcoinusd extends Exchange {
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
-            'baseVolume': parseFloat (ticker['vol']),
+            'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
             'info': ticker,
         };
@@ -315,8 +315,8 @@ module.exports = class okcoinusd extends Exchange {
             'order': undefined,
             'type': undefined,
             'side': trade['type'],
-            'price': parseFloat (trade['price']),
-            'amount': parseFloat (trade['amount']),
+            'price': this.safeFloat (trade, 'price'),
+            'amount': this.safeFloat (trade, 'amount'),
         };
     }
 
@@ -415,9 +415,24 @@ module.exports = class okcoinusd extends Exchange {
         params = this.omit (params, 'cost');
         method += 'Trade';
         let response = await this[method] (this.extend (order, params));
+        let timestamp = this.milliseconds ();
         return {
             'info': response,
             'id': response['order_id'].toString (),
+            'timestamp': timestamp,
+            'datetime': this.iso8601 (timestamp),
+            'lastTradeTimestamp': undefined,
+            'status': undefined,
+            'symbol': symbol,
+            'type': type,
+            'side': side,
+            'price': price,
+            'amount': amount,
+            'filled': undefined,
+            'remaining': undefined,
+            'cost': undefined,
+            'trades': undefined,
+            'fee': undefined,
         };
     }
 
@@ -450,6 +465,8 @@ module.exports = class okcoinusd extends Exchange {
             return 'open';
         if (status === 2)
             return 'closed';
+        if (status === 3)
+            return 'open';
         if (status === 4)
             return 'canceled';
         return status;
@@ -511,6 +528,7 @@ module.exports = class okcoinusd extends Exchange {
             'id': order['order_id'].toString (),
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
+            'lastTradeTimestamp': undefined,
             'symbol': symbol,
             'type': type,
             'side': side,
@@ -593,6 +611,7 @@ module.exports = class okcoinusd extends Exchange {
                 method += 'OrdersInfo';
                 request = this.extend (request, {
                     'type': status,
+                    'order_id': params['order_id'],
                 });
             } else {
                 method += 'OrderHistory';
@@ -611,17 +630,17 @@ module.exports = class okcoinusd extends Exchange {
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         let open = 0; // 0 for unfilled orders, 1 for filled orders
-        return await this.fetchOrders (symbol, undefined, undefined, this.extend ({
+        return await this.fetchOrders (symbol, since, limit, this.extend ({
             'status': open,
         }, params));
     }
 
     async fetchClosedOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         let closed = 1; // 0 for unfilled orders, 1 for filled orders
-        let orders = await this.fetchOrders (symbol, undefined, undefined, this.extend ({
+        let orders = await this.fetchOrders (symbol, since, limit, this.extend ({
             'status': closed,
         }, params));
-        return this.filterBy (orders, 'status', 'closed');
+        return orders;
     }
 
     async withdraw (code, amount, address, tag = undefined, params = {}) {
@@ -636,7 +655,7 @@ module.exports = class okcoinusd extends Exchange {
             'symbol': currencyId,
             'withdraw_address': address,
             'withdraw_amount': amount,
-            'target': 'address', // or okcn, okcom, okex
+            'target': 'address', // or 'okcn', 'okcom', 'okex'
         };
         let query = params;
         if ('chargefee' in query) {

@@ -374,22 +374,28 @@ class liqui extends Exchange {
             'amount' => $this->amount_to_precision($symbol, $amount),
             'rate' => $this->price_to_precision($symbol, $price),
         );
-        $response = $this->privatePostTrade (array_merge ($request, $params));
-        $id = $this->safe_string($response['return'], $this->get_order_id_key ());
-        $timestamp = $this->milliseconds ();
         $price = floatval ($price);
         $amount = floatval ($amount);
+        $response = $this->privatePostTrade (array_merge ($request, $params));
+        $id = null;
         $status = 'open';
-        if ($id === '0') {
-            $id = $this->safe_string($response['return'], 'init_order_id');
-            $status = 'closed';
+        $filled = 0.0;
+        $remaining = $amount;
+        if (is_array ($response) && array_key_exists ('return', $response)) {
+            $id = $this->safe_string($response['return'], $this->get_order_id_key ());
+            if ($id === '0') {
+                $id = $this->safe_string($response['return'], 'init_order_id');
+                $status = 'closed';
+            }
+            $filled = $this->safe_float($response['return'], 'received', 0.0);
+            $remaining = $this->safe_float($response['return'], 'remains', $amount);
         }
-        $filled = $this->safe_float($response['return'], 'received', 0.0);
-        $remaining = $this->safe_float($response['return'], 'remains', $amount);
+        $timestamp = $this->milliseconds ();
         $order = array (
             'id' => $id,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
+            'lastTradeTimestamp' => null,
             'status' => $status,
             'symbol' => $symbol,
             'type' => $type,
@@ -471,6 +477,7 @@ class liqui extends Exchange {
             'symbol' => $symbol,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
+            'lastTradeTimestamp' => null,
             'type' => 'limit',
             'side' => $order['type'],
             'price' => $price,
@@ -510,43 +517,42 @@ class liqui extends Exchange {
 
     public function update_cached_orders ($openOrders, $symbol) {
         // update local cache with open orders
+        // this will add unseen orders and overwrite existing ones
         for ($j = 0; $j < count ($openOrders); $j++) {
             $id = $openOrders[$j]['id'];
             $this->orders[$id] = $openOrders[$j];
         }
         $openOrdersIndexedById = $this->index_by($openOrders, 'id');
         $cachedOrderIds = is_array ($this->orders) ? array_keys ($this->orders) : array ();
-        $result = array ();
         for ($k = 0; $k < count ($cachedOrderIds); $k++) {
-            // match each cached $order to an $order in the open orders array
-            // possible reasons why a cached $order may be missing in the open orders array:
-            // - $order was closed or canceled -> update cache
+            // match each cached order to an order in the open orders array
+            // possible reasons why a cached order may be missing in the open orders array:
+            // - order was closed or canceled -> update cache
             // - $symbol mismatch (e.g. cached BTC/USDT, fetched ETH/USDT) -> skip
-            $id = $cachedOrderIds[$k];
-            $order = $this->orders[$id];
-            $result[] = $order;
-            if (!(is_array ($openOrdersIndexedById) && array_key_exists ($id, $openOrdersIndexedById))) {
-                // cached $order is not in open orders array
-                // if we fetched orders by $symbol and it doesn't match the cached $order -> won't update the cached $order
-                if ($symbol !== null && $symbol !== $order['symbol'])
+            $cachedOrderId = $cachedOrderIds[$k];
+            $cachedOrder = $this->orders[$cachedOrderId];
+            if (!(is_array ($openOrdersIndexedById) && array_key_exists ($cachedOrderId, $openOrdersIndexedById))) {
+                // cached order is not in open orders array
+                // if we fetched orders by $symbol and it doesn't match the cached order -> won't update the cached order
+                if ($symbol !== null && $symbol !== $cachedOrder['symbol'])
                     continue;
-                // $order is cached but not present in the list of open orders -> mark the cached $order as closed
-                if ($order['status'] === 'open') {
-                    $order = array_merge ($order, array (
+                // cached order is absent from the list of open orders -> mark the cached order as closed
+                if ($cachedOrder['status'] === 'open') {
+                    $cachedOrder = array_merge ($cachedOrder, array (
                         'status' => 'closed', // likewise it might have been canceled externally (unnoticed by "us")
                         'cost' => null,
-                        'filled' => $order['amount'],
+                        'filled' => $cachedOrder['amount'],
                         'remaining' => 0.0,
                     ));
-                    if ($order['cost'] == null) {
-                        if ($order['filled'] != null)
-                            $order['cost'] = $order['filled'] * $order['price'];
+                    if ($cachedOrder['cost'] == null) {
+                        if ($cachedOrder['filled'] != null)
+                            $cachedOrder['cost'] = $cachedOrder['filled'] * $cachedOrder['price'];
                     }
-                    $this->orders[$id] = $order;
+                    $this->orders[$cachedOrderId] = $cachedOrder;
                 }
             }
         }
-        return $result;
+        return $this->to_array($this->orders);
     }
 
     public function fetch_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
@@ -647,10 +653,25 @@ class liqui extends Exchange {
                 'Key' => $this->apiKey,
                 'Sign' => $signature,
             );
-        } else {
+        } else if ($api === 'public') {
             $url .= $this->get_version_string() . '/' . $this->implode_params($path, $params);
-            if ($query)
+            if ($query) {
                 $url .= '?' . $this->urlencode ($query);
+            }
+        } else {
+            $url .= '/' . $this->implode_params($path, $params);
+            if ($method === 'GET') {
+                if ($query) {
+                    $url .= '?' . $this->urlencode ($query);
+                }
+            } else {
+                if ($query) {
+                    $body = $this->json ($query);
+                    $headers = array (
+                        'Content-Type' => 'application/json',
+                    );
+                }
+            }
         }
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }

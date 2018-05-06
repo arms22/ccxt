@@ -162,16 +162,33 @@ class bitmex (Exchange):
             else:
                 future = True
                 type = 'future'
-            maker = market['makerFee']
-            taker = market['takerFee']
+            precision = {
+                'amount': None,
+                'price': None,
+            }
+            if market['lotSize']:
+                precision['amount'] = self.precision_from_string(self.truncate_to_string(market['lotSize'], 16))
+            if market['tickSize']:
+                precision['price'] = self.precision_from_string(self.truncate_to_string(market['tickSize'], 16))
             result.append({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
                 'active': active,
-                'taker': taker,
-                'maker': maker,
+                'precision': precision,
+                'limits': {
+                    'amount': {
+                        'min': market['lotSize'],
+                        'max': market['maxOrderQty'],
+                    },
+                    'price': {
+                        'min': market['tickSize'],
+                        'max': market['maxPrice'],
+                    },
+                },
+                'taker': market['takerFee'],
+                'maker': market['makerFee'],
                 'type': type,
                 'spot': False,
                 'swap': swap,
@@ -315,8 +332,8 @@ class bitmex (Exchange):
             'change': change,
             'percentage': change / open * 100,
             'average': self.sum(open, close) / 2,
-            'baseVolume': self.safe_float(ticker,'homeNotional'),
-            'quoteVolume': self.safe_float(ticker,'foreignNotional'),
+            'baseVolume': self.safe_float(ticker, 'homeNotional'),
+            'quoteVolume': self.safe_float(ticker, 'foreignNotional'),
             'info': ticker,
         }
 
@@ -427,6 +444,7 @@ class bitmex (Exchange):
             'id': str(order['orderID']),
             'timestamp': timestamp,
             'datetime': iso8601,
+            'lastTradeTimestamp': None,
             'symbol': symbol,
             'type': order['ordType'].lower(),
             'side': order['side'].lower(),

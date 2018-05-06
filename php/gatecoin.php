@@ -189,6 +189,14 @@ class gatecoin extends Exchange {
                     'taker' => 0.0035,
                 ),
             ),
+            'commonCurrencies' => array (
+                'BCP' => 'BCPT',
+                'FLI' => 'FLIXX',
+                'MAN' => 'MANA',
+                'SLT' => 'SALT',
+                'TRA' => 'TRAC',
+                'WGS' => 'WINGS',
+            ),
         ));
     }
 
@@ -201,8 +209,8 @@ class gatecoin extends Exchange {
             $id = $market['tradingCode'];
             $baseId = $market['baseCurrency'];
             $quoteId = $market['quoteCurrency'];
-            $base = $baseId;
-            $quote = $quoteId;
+            $base = $this->common_currency_code($baseId);
+            $quote = $this->common_currency_code($quoteId);
             $symbol = $base . '/' . $quote;
             $precision = array (
                 'amount' => 8,
@@ -245,7 +253,10 @@ class gatecoin extends Exchange {
         $result = array ( 'info' => $balances );
         for ($b = 0; $b < count ($balances); $b++) {
             $balance = $balances[$b];
-            $currency = $balance['currency'];
+            $currencyId = $balance['currency'];
+            $code = $currencyId;
+            if (is_array ($this->currencies_by_id) && array_key_exists ($currencyId, $this->currencies_by_id))
+                $code = $this->currencies_by_id[$currencyId]['code'];
             $account = array (
                 'free' => $balance['availableBalance'],
                 'used' => $this->sum (
@@ -255,7 +266,7 @@ class gatecoin extends Exchange {
                 ),
                 'total' => $balance['balance'],
             );
-            $result[$currency] = $account;
+            $result[$code] = $account;
         }
         return $this->parse_balance($result);
     }
@@ -282,22 +293,22 @@ class gatecoin extends Exchange {
         $symbol = null;
         if ($market)
             $symbol = $market['symbol'];
-        $baseVolume = floatval ($ticker['volume']);
-        $vwap = floatval ($ticker['vwap']);
+        $baseVolume = $this->safe_float($ticker, 'volume');
+        $vwap = $this->safe_float($ticker, 'vwap');
         $quoteVolume = $baseVolume * $vwap;
-        $last = floatval ($ticker['last']);
+        $last = $this->safe_float($ticker, 'last');
         return array (
             'symbol' => $symbol,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
-            'high' => floatval ($ticker['high']),
-            'low' => floatval ($ticker['low']),
-            'bid' => floatval ($ticker['bid']),
+            'high' => $this->safe_float($ticker, 'high'),
+            'low' => $this->safe_float($ticker, 'low'),
+            'bid' => $this->safe_float($ticker, 'bid'),
             'bidVolume' => null,
-            'ask' => floatval ($ticker['ask']),
+            'ask' => $this->safe_float($ticker, 'ask'),
             'askVolume' => null,
             'vwap' => $vwap,
-            'open' => floatval ($ticker['open']),
+            'open' => $this->safe_float($ticker, 'open'),
             'close' => $last,
             'last' => $last,
             'previousClose' => null,
@@ -529,6 +540,7 @@ class gatecoin extends Exchange {
             'id' => $id,
             'datetime' => $this->iso8601 ($timestamp),
             'timestamp' => $timestamp,
+            'lastTradeTimestamp' => null,
             'status' => $status,
             'symbol' => $symbol,
             'type' => $type,
@@ -634,11 +646,7 @@ class gatecoin extends Exchange {
             'DigiCurrency' => $currency['id'],
         );
         $response = $this->privatePostElectronicWalletDepositWalletsDigiCurrency (array_merge ($request, $params));
-        $result = $response['addresses'];
-        $numResults = is_array ($result) ? count ($result) : 0;
-        if ($numResults < 1)
-            throw new InvalidAddress ($this->id . ' privatePostElectronicWalletDepositWalletsDigiCurrency() returned no addresses');
-        $address = $this->safe_string($result[0], 'address');
+        $address = $response['address'];
         $this->check_address($address);
         return array (
             'currency' => $code,

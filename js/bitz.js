@@ -125,6 +125,9 @@ module.exports = class bitz extends Exchange {
             'options': {
                 'lastNonceTimestamp': 0,
             },
+            'commonCurrencies': {
+                'PXC': 'Pixiecoin',
+            },
         });
     }
 
@@ -185,16 +188,16 @@ module.exports = class bitz extends Exchange {
     parseTicker (ticker, market = undefined) {
         let timestamp = ticker['date'] * 1000;
         let symbol = market['symbol'];
-        let last = parseFloat (ticker['last']);
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['high']),
-            'low': parseFloat (ticker['low']),
-            'bid': parseFloat (ticker['buy']),
+            'high': this.safeFloat (ticker, 'high'),
+            'low': this.safeFloat (ticker, 'low'),
+            'bid': this.safeFloat (ticker, 'buy'),
             'bidVolume': undefined,
-            'ask': parseFloat (ticker['sell']),
+            'ask': this.safeFloat (ticker, 'sell'),
             'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
@@ -204,7 +207,7 @@ module.exports = class bitz extends Exchange {
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
-            'baseVolume': parseFloat (ticker['vol']),
+            'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
             'info': ticker,
         };
@@ -250,8 +253,8 @@ module.exports = class bitz extends Exchange {
         utcDate = utcDate.split ('T');
         utcDate = utcDate[0] + ' ' + trade['t'] + '+08';
         let timestamp = this.parse8601 (utcDate);
-        let price = parseFloat (trade['p']);
-        let amount = parseFloat (trade['n']);
+        let price = this.safeFloat (trade, 'p');
+        let amount = this.safeFloat (trade, 'n');
         let symbol = market['symbol'];
         let cost = this.priceToPrecision (symbol, amount * price);
         return {
@@ -311,6 +314,7 @@ module.exports = class bitz extends Exchange {
             'id': order['id'],
             'datetime': iso8601,
             'timestamp': timestamp,
+            'lastTradeTimestamp': undefined,
             'status': 'open',
             'symbol': symbol,
             'type': 'limit',
@@ -330,6 +334,8 @@ module.exports = class bitz extends Exchange {
         await this.loadMarkets ();
         let market = this.market (symbol);
         let orderType = (side === 'buy') ? 'in' : 'out';
+        if (!this.password)
+            throw new ExchangeError (this.id + ' createOrder() requires you to set exchange.password = "YOUR_TRADING_PASSWORD" (a trade password is NOT THE SAME as your login password)');
         let request = {
             'coin': market['id'],
             'type': orderType,

@@ -254,16 +254,16 @@ class okcoinusd extends Exchange {
         }
         if ($market)
             $symbol = $market['symbol'];
-        $last = floatval ($ticker['last']);
+        $last = $this->safe_float($ticker, 'last');
         return array (
             'symbol' => $symbol,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
-            'high' => floatval ($ticker['high']),
-            'low' => floatval ($ticker['low']),
-            'bid' => floatval ($ticker['buy']),
+            'high' => $this->safe_float($ticker, 'high'),
+            'low' => $this->safe_float($ticker, 'low'),
+            'bid' => $this->safe_float($ticker, 'buy'),
             'bidVolume' => null,
-            'ask' => floatval ($ticker['sell']),
+            'ask' => $this->safe_float($ticker, 'sell'),
             'askVolume' => null,
             'vwap' => null,
             'open' => null,
@@ -273,7 +273,7 @@ class okcoinusd extends Exchange {
             'change' => null,
             'percentage' => null,
             'average' => null,
-            'baseVolume' => floatval ($ticker['vol']),
+            'baseVolume' => $this->safe_float($ticker, 'vol'),
             'quoteVolume' => null,
             'info' => $ticker,
         );
@@ -316,8 +316,8 @@ class okcoinusd extends Exchange {
             'order' => null,
             'type' => null,
             'side' => $trade['type'],
-            'price' => floatval ($trade['price']),
-            'amount' => floatval ($trade['amount']),
+            'price' => $this->safe_float($trade, 'price'),
+            'amount' => $this->safe_float($trade, 'amount'),
         );
     }
 
@@ -416,9 +416,24 @@ class okcoinusd extends Exchange {
         $params = $this->omit ($params, 'cost');
         $method .= 'Trade';
         $response = $this->$method (array_merge ($order, $params));
+        $timestamp = $this->milliseconds ();
         return array (
             'info' => $response,
             'id' => (string) $response['order_id'],
+            'timestamp' => $timestamp,
+            'datetime' => $this->iso8601 ($timestamp),
+            'lastTradeTimestamp' => null,
+            'status' => null,
+            'symbol' => $symbol,
+            'type' => $type,
+            'side' => $side,
+            'price' => $price,
+            'amount' => $amount,
+            'filled' => null,
+            'remaining' => null,
+            'cost' => null,
+            'trades' => null,
+            'fee' => null,
         );
     }
 
@@ -451,6 +466,8 @@ class okcoinusd extends Exchange {
             return 'open';
         if ($status === 2)
             return 'closed';
+        if ($status === 3)
+            return 'open';
         if ($status === 4)
             return 'canceled';
         return $status;
@@ -512,6 +529,7 @@ class okcoinusd extends Exchange {
             'id' => (string) $order['order_id'],
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
+            'lastTradeTimestamp' => null,
             'symbol' => $symbol,
             'type' => $type,
             'side' => $side,
@@ -594,6 +612,7 @@ class okcoinusd extends Exchange {
                 $method .= 'OrdersInfo';
                 $request = array_merge ($request, array (
                     'type' => $status,
+                    'order_id' => $params['order_id'],
                 ));
             } else {
                 $method .= 'OrderHistory';
@@ -612,17 +631,17 @@ class okcoinusd extends Exchange {
 
     public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
         $open = 0; // 0 for unfilled orders, 1 for filled orders
-        return $this->fetch_orders($symbol, null, null, array_merge (array (
+        return $this->fetch_orders($symbol, $since, $limit, array_merge (array (
             'status' => $open,
         ), $params));
     }
 
     public function fetch_closed_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
         $closed = 1; // 0 for unfilled $orders, 1 for filled $orders
-        $orders = $this->fetch_orders($symbol, null, null, array_merge (array (
+        $orders = $this->fetch_orders($symbol, $since, $limit, array_merge (array (
             'status' => $closed,
         ), $params));
-        return $this->filter_by($orders, 'status', 'closed');
+        return $orders;
     }
 
     public function withdraw ($code, $amount, $address, $tag = null, $params = array ()) {
@@ -637,7 +656,7 @@ class okcoinusd extends Exchange {
             'symbol' => $currencyId,
             'withdraw_address' => $address,
             'withdraw_amount' => $amount,
-            'target' => 'address', // or okcn, okcom, okex
+            'target' => 'address', // or 'okcn', 'okcom', 'okex'
         );
         $query = $params;
         if (is_array ($query) && array_key_exists ('chargefee', $query)) {

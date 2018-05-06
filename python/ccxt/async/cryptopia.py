@@ -91,6 +91,7 @@ class cryptopia (Exchange):
                 'FUEL': 'FC2',  # FuelCoin != FUEL
                 'HAV': 'Havecoin',
                 'LDC': 'LADACoin',
+                'MARKS': 'Bitmark',
                 'NET': 'NetCoin',
                 'QBT': 'Cubits',
                 'WRC': 'WarCoin',
@@ -105,10 +106,10 @@ class cryptopia (Exchange):
             market = markets[i]
             id = market['Id']
             symbol = market['Label']
-            base = market['Symbol']
-            quote = market['BaseSymbol']
-            base = self.common_currency_code(base)
-            quote = self.common_currency_code(quote)
+            baseId = market['Symbol']
+            quoteId = market['BaseSymbol']
+            base = self.common_currency_code(baseId)
+            quote = self.common_currency_code(quoteId)
             symbol = base + '/' + quote
             precision = {
                 'amount': 8,
@@ -127,7 +128,7 @@ class cryptopia (Exchange):
                 'amount': amountLimits,
                 'price': priceLimits,
                 'cost': {
-                    'min': priceLimits['min'] * amountLimits['min'],
+                    'min': market['MinimumBaseTrade'],
                     'max': None,
                 },
             }
@@ -135,8 +136,11 @@ class cryptopia (Exchange):
             result.append({
                 'id': id,
                 'symbol': symbol,
+                'label': market['Label'],
                 'base': base,
                 'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
                 'info': market,
                 'maker': market['TradeFee'] / 100,
                 'taker': market['TradeFee'] / 100,
@@ -145,6 +149,7 @@ class cryptopia (Exchange):
                 'precision': precision,
                 'limits': limits,
             })
+        self.options['marketsByLabel'] = self.index_by(result, 'label')
         return result
 
     async def fetch_order_book(self, symbol, limit=None, params={}):
@@ -207,11 +212,11 @@ class cryptopia (Exchange):
             'info': ticker,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': float(ticker['High']),
-            'low': float(ticker['Low']),
-            'bid': float(ticker['BidPrice']),
+            'high': self.safe_float(ticker, 'High'),
+            'low': self.safe_float(ticker, 'Low'),
+            'bid': self.safe_float(ticker, 'BidPrice'),
             'bidVolume': None,
-            'ask': float(ticker['AskPrice']),
+            'ask': self.safe_float(ticker, 'AskPrice'),
             'askVolume': None,
             'vwap': vwap,
             'open': open,
@@ -219,7 +224,7 @@ class cryptopia (Exchange):
             'last': last,
             'previousClose': None,
             'change': change,
-            'percentage': float(ticker['Change']),
+            'percentage': self.safe_float(ticker, 'Change'),
             'average': self.sum(last, open) / 2,
             'baseVolume': baseVolume,
             'quoteVolume': quoteVolume,
@@ -415,6 +420,7 @@ class cryptopia (Exchange):
             'id': id,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': None,
             'status': 'open',
             'symbol': symbol,
             'type': type,
@@ -459,6 +465,10 @@ class cryptopia (Exchange):
             if id in self.markets_by_id:
                 market = self.markets_by_id[id]
                 symbol = market['symbol']
+            else:
+                if id in self.options['marketsByLabel']:
+                    market = self.options['marketsByLabel'][id]
+                    symbol = market['symbol']
         timestamp = self.parse8601(order['TimeStamp'])
         amount = self.safe_float(order, 'Amount')
         remaining = self.safe_float(order, 'Remaining')
@@ -468,6 +478,7 @@ class cryptopia (Exchange):
             'info': self.omit(order, 'status'),
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': None,
             'status': order['status'],
             'symbol': symbol,
             'type': 'limit',
@@ -482,15 +493,17 @@ class cryptopia (Exchange):
         }
 
     async def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
-        if not symbol:
-            raise ExchangeError(self.id + ' fetchOrders requires a symbol param')
         await self.load_markets()
-        market = self.market(symbol)
-        response = await self.privatePostGetOpenOrders({
+        market = None
+        request = {
             # 'Market': market['id'],
-            'TradePairId': market['id'],  # Cryptopia identifier(not required if 'Market' supplied)
+            # 'TradePairId': market['id'],  # Cryptopia identifier(not required if 'Market' supplied)
             # 'Count': 100,  # default = 100
-        }, params)
+        }
+        if symbol is not None:
+            market = self.market(symbol)
+            request['TradePairId'] = market['id']
+        response = await self.privatePostGetOpenOrders(self.extend(request, params))
         orders = []
         for i in range(0, len(response['Data'])):
             orders.append(self.extend(response['Data'][i], {'status': 'open'}))
@@ -514,7 +527,7 @@ class cryptopia (Exchange):
                         'remaining': 0.0,
                     })
             order = self.orders[id]
-            if order['symbol'] == symbol:
+            if (symbol is None) or (order['symbol'] == symbol):
                 result.append(order)
         return self.filter_by_since_limit(result, since, limit)
 

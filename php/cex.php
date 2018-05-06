@@ -143,8 +143,8 @@ class cex extends Exchange {
                         'max' => $market['maxLotSize'],
                     ),
                     'price' => array (
-                        'min' => floatval ($market['minPrice']),
-                        'max' => floatval ($market['maxPrice']),
+                        'min' => $this->safe_float($market, 'minPrice'),
+                        'max' => $this->safe_float($market, 'maxPrice'),
                     ),
                     'cost' => array (
                         'min' => $market['minLotSizeS2'],
@@ -292,8 +292,8 @@ class cex extends Exchange {
             'symbol' => $market['symbol'],
             'type' => null,
             'side' => $trade['type'],
-            'price' => floatval ($trade['price']),
-            'amount' => floatval ($trade['amount']),
+            'price' => $this->safe_float($trade, 'price'),
+            'amount' => $this->safe_float($trade, 'amount'),
         );
     }
 
@@ -412,6 +412,7 @@ class cex extends Exchange {
             'id' => $order['id'],
             'datetime' => $this->iso8601 ($timestamp),
             'timestamp' => $timestamp,
+            'lastTradeTimestamp' => null,
             'status' => $status,
             'symbol' => $symbol,
             'type' => null,
