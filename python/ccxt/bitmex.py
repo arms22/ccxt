@@ -10,6 +10,7 @@ from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import PermissionDenied
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import DDoSProtection
+from ccxt.base.errors import NotFound
 
 
 class bitmex (Exchange):
@@ -138,6 +139,7 @@ class bitmex (Exchange):
             'exceptions': {
                 'Invalid API Key.': AuthenticationError,
                 'Access Denied': PermissionDenied,
+                'Not Found': NotFound,
             },
             'options': {
                 'fetchTickerQuotes': True,

@@ -77,6 +77,8 @@ class PermissionDenied(AuthenticationError):
     """Raised when API credentials are required but missing or wrong"""
     pass
 
+class NotFound(ExchangeError):
+    pass
 
 class InsufficientFunds(ExchangeError):
     """Raised when you don't have enough currency on your account balance to place an order"""
