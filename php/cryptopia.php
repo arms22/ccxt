@@ -34,6 +34,7 @@ class cryptopia extends Exchange {
                 'logo' => 'https://user-images.githubusercontent.com/1294454/29484394-7b4ea6e2-84c6-11e7-83e5-1fccf4b2dc81.jpg',
                 'api' => 'https://www.cryptopia.co.nz/api',
                 'www' => 'https://www.cryptopia.co.nz',
+                'referral' => 'https://www.cryptopia.co.nz/Register?referrer=kroitor',
                 'doc' => array (
                     'https://www.cryptopia.co.nz/Forum/Category/45',
                     'https://www.cryptopia.co.nz/Forum/Thread/255',
@@ -81,14 +82,19 @@ class cryptopia extends Exchange {
                 'BTG' => 'Bitgem',
                 'CC' => 'CCX',
                 'CMT' => 'Comet',
+                'EPC' => 'ExperienceCoin',
                 'FCN' => 'Facilecoin',
                 'FUEL' => 'FC2', // FuelCoin != FUEL
                 'HAV' => 'Havecoin',
+                'LBTC' => 'LiteBitcoin',
                 'LDC' => 'LADACoin',
                 'MARKS' => 'Bitmark',
                 'NET' => 'NetCoin',
                 'QBT' => 'Cubits',
                 'WRC' => 'WarCoin',
+            ),
+            'options' => array (
+                'fetchTickersErrors' => true,
             ),
         ));
     }
@@ -168,16 +174,14 @@ class cryptopia extends Exchange {
 
     public function fetch_order_books ($symbols = null, $params = array ()) {
         $this->load_markets();
-        $ids = null;
-        if (!$symbols) {
-            $numIds = is_array ($this->ids) ? count ($this->ids) : 0;
-            // max URL length is 2083 characters, including http schema, hostname, tld, etc...
-            if ($numIds > 2048)
-                throw new ExchangeError ($this->id . ' has ' . (string) $numIds . ' $symbols exceeding max URL length, you are required to specify a list of $symbols in the first argument to fetchOrderBooks');
-            $ids = $this->join_market_ids ($this->ids);
-        } else {
-            $ids = $this->join_market_ids ($this->market_ids($symbols));
+        if ($symbols === null) {
+            throw new ExchangeError ($this->id . ' fetchOrderBooks requires the $symbols argument as of May 2018 (up to 5 $symbols at max)');
         }
+        $numSymbols = is_array ($symbols) ? count ($symbols) : 0;
+        if ($numSymbols > 5) {
+            throw new ExchangeError ($this->id . ' fetchOrderBooks accepts 5 $symbols at max');
+        }
+        $ids = $this->join_market_ids ($this->market_ids($symbols));
         $response = $this->publicGetGetMarketOrderGroupsIds (array_merge (array (
             'ids' => $ids,
         ), $params));
@@ -254,11 +258,14 @@ class cryptopia extends Exchange {
             $ticker = $tickers[$i];
             $id = $ticker['TradePairId'];
             $recognized = (is_array ($this->markets_by_id) && array_key_exists ($id, $this->markets_by_id));
-            if (!$recognized)
-                throw new ExchangeError ($this->id . ' fetchTickers() returned unrecognized pair $id ' . (string) $id);
-            $market = $this->markets_by_id[$id];
-            $symbol = $market['symbol'];
-            $result[$symbol] = $this->parse_ticker($ticker, $market);
+            if (!$recognized) {
+                if ($this->options['fetchTickersErrors'])
+                    throw new ExchangeError ($this->id . ' fetchTickers() returned unrecognized pair $id ' . (string) $id);
+            } else {
+                $market = $this->markets_by_id[$id];
+                $symbol = $market['symbol'];
+                $result[$symbol] = $this->parse_ticker($ticker, $market);
+            }
         }
         return $this->filter_by_array($result, 'symbol', $symbols);
     }
@@ -390,7 +397,7 @@ class cryptopia extends Exchange {
 
     public function fetch_balance ($params = array ()) {
         $this->load_markets();
-        $response = $this->privatePostGetBalance ();
+        $response = $this->privatePostGetBalance ($params);
         $balances = $response['Data'];
         $result = array ( 'info' => $response );
         for ($i = 0; $i < count ($balances); $i++) {
@@ -428,17 +435,14 @@ class cryptopia extends Exchange {
             throw new ExchangeError ($this->id . ' createOrder returned unknown error => ' . $this->json ($response));
         $id = null;
         $filled = 0.0;
+        $status = 'open';
         if (is_array ($response) && array_key_exists ('Data', $response)) {
             if (is_array ($response['Data']) && array_key_exists ('OrderId', $response['Data'])) {
                 if ($response['Data']['OrderId']) {
                     $id = (string) $response['Data']['OrderId'];
-                }
-            }
-            if (is_array ($response['Data']) && array_key_exists ('FilledOrders', $response['Data'])) {
-                $filledOrders = $response['Data']['FilledOrders'];
-                $filledOrdersLength = is_array ($filledOrders) ? count ($filledOrders) : 0;
-                if ($filledOrdersLength) {
-                    $filled = null;
+                } else {
+                    $filled = $amount;
+                    $status = 'closed';
                 }
             }
         }
@@ -448,14 +452,14 @@ class cryptopia extends Exchange {
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
             'lastTradeTimestamp' => null,
-            'status' => 'open',
+            'status' => $status,
             'symbol' => $symbol,
             'type' => $type,
             'side' => $side,
             'price' => $price,
             'cost' => $price * $amount,
             'amount' => $amount,
-            'remaining' => $amount,
+            'remaining' => $amount - $filled,
             'filled' => $filled,
             'fee' => null,
             // 'trades' => $this->parse_trades($order['trades'], $market),
@@ -559,12 +563,14 @@ class cryptopia extends Exchange {
             } else {
                 $order = $this->orders[$id];
                 if ($order['status'] === 'open') {
-                    $this->orders[$id] = array_merge ($order, array (
-                        'status' => 'closed',
-                        'cost' => $order['amount'] * $order['price'],
-                        'filled' => $order['amount'],
-                        'remaining' => 0.0,
-                    ));
+                    if (($symbol === null) || ($order['symbol'] === $symbol)) {
+                        $this->orders[$id] = array_merge ($order, array (
+                            'status' => 'closed',
+                            'cost' => $order['amount'] * $order['price'],
+                            'filled' => $order['amount'],
+                            'remaining' => 0.0,
+                        ));
+                    }
                 }
             }
             $order = $this->orders[$id];
@@ -605,6 +611,7 @@ class cryptopia extends Exchange {
     }
 
     public function fetch_deposit_address ($code, $params = array ()) {
+        $this->load_markets();
         $currency = $this->currency ($code);
         $response = $this->privatePostGetDepositAddress (array_merge (array (
             'Currency' => $currency['id'],
@@ -622,6 +629,7 @@ class cryptopia extends Exchange {
     }
 
     public function withdraw ($code, $amount, $address, $tag = null, $params = array ()) {
+        $this->load_markets();
         $currency = $this->currency ($code);
         $this->check_address($address);
         $request = array (
@@ -671,8 +679,11 @@ class cryptopia extends Exchange {
                 if ($response['Success']) {
                     return $response;
                 } else if (is_array ($response) && array_key_exists ('Error', $response)) {
-                    if ($response['Error'] === 'Insufficient Funds.')
-                        throw new InsufficientFunds ($this->id . ' ' . $this->json ($response));
+                    $error = $this->safe_string($response, 'error');
+                    if ($error !== null) {
+                        if (mb_strpos ($error, 'Insufficient Funds') !== false)
+                            throw new InsufficientFunds ($this->id . ' ' . $this->json ($response));
+                    }
                 }
         }
         throw new ExchangeError ($this->id . ' ' . $this->json ($response));

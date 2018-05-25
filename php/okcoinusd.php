@@ -113,7 +113,7 @@ class okcoinusd extends Exchange {
             'urls' => array (
                 'logo' => 'https://user-images.githubusercontent.com/1294454/27766791-89ffb502-5ee5-11e7-8a5b-c5950b68ac65.jpg',
                 'api' => array (
-                    'web' => 'https://www.okcoin.com/v2',
+                    'web' => 'https://www.okcoin.com/v2/spot',
                     'public' => 'https://www.okcoin.com/api',
                     'private' => 'https://www.okcoin.com/api',
                 ),
@@ -132,6 +132,7 @@ class okcoinusd extends Exchange {
             'exceptions' => array (
                 '1009' => '\\ccxt\\OrderNotFound', // for spot markets, cancelling closed order
                 '1051' => '\\ccxt\\OrderNotFound', // for spot markets, cancelling "just closed" order
+                '1019' => '\\ccxt\\OrderNotFound', // order closed?
                 '20015' => '\\ccxt\\OrderNotFound', // for future markets
                 '1013' => '\\ccxt\\InvalidOrder', // no contract type (PR-1101)
                 '1027' => '\\ccxt\\InvalidOrder', // createLimitBuyOrder(symbol, 0, 0) => Incorrect parameter may exceeded limits
@@ -177,6 +178,8 @@ class okcoinusd extends Exchange {
             $minAmount = $markets[$i]['minTradeSize'];
             $minPrice = pow (10, -$precision['price']);
             $active = ($markets[$i]['online'] !== 0);
+            $baseNumericId = $markets[$i]['baseCurrency'];
+            $quoteNumericId = $markets[$i]['quoteCurrency'];
             $market = array_merge ($this->fees['trading'], array (
                 'id' => $id,
                 'symbol' => $symbol,
@@ -184,6 +187,8 @@ class okcoinusd extends Exchange {
                 'quote' => $quote,
                 'baseId' => $baseId,
                 'quoteId' => $quoteId,
+                'baseNumericId' => $baseNumericId,
+                'quoteNumericId' => $quoteNumericId,
                 'info' => $markets[$i],
                 'type' => 'spot',
                 'spot' => true,
@@ -517,9 +522,12 @@ class okcoinusd extends Exchange {
         $createDateField = $this->get_create_date_field ();
         if (is_array ($order) && array_key_exists ($createDateField, $order))
             $timestamp = $order[$createDateField];
-        $amount = $order['amount'];
-        $filled = $order['deal_amount'];
+        $amount = $this->safe_float($order, 'amount');
+        $filled = $this->safe_float($order, 'deal_amount');
         $remaining = $amount - $filled;
+        if ($type === 'market') {
+            $remaining = 0;
+        }
         $average = $this->safe_float($order, 'avg_price');
         // https://github.com/ccxt/ccxt/issues/2452
         $average = $this->safe_float($order, 'price_avg', $average);
@@ -688,7 +696,9 @@ class okcoinusd extends Exchange {
         $url = '/';
         if ($api !== 'web')
             $url .= $this->version . '/';
-        $url .= $path . $this->extension;
+        $url .= $path;
+        if ($api !== 'web')
+            $url .= $this->extension;
         if ($api === 'private') {
             $this->check_required_credentials();
             $query = $this->keysort (array_merge (array (

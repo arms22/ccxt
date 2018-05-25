@@ -40,6 +40,7 @@ class cryptopia (Exchange):
                 'logo': 'https://user-images.githubusercontent.com/1294454/29484394-7b4ea6e2-84c6-11e7-83e5-1fccf4b2dc81.jpg',
                 'api': 'https://www.cryptopia.co.nz/api',
                 'www': 'https://www.cryptopia.co.nz',
+                'referral': 'https://www.cryptopia.co.nz/Register?referrer=kroitor',
                 'doc': [
                     'https://www.cryptopia.co.nz/Forum/Category/45',
                     'https://www.cryptopia.co.nz/Forum/Thread/255',
@@ -87,14 +88,19 @@ class cryptopia (Exchange):
                 'BTG': 'Bitgem',
                 'CC': 'CCX',
                 'CMT': 'Comet',
+                'EPC': 'ExperienceCoin',
                 'FCN': 'Facilecoin',
                 'FUEL': 'FC2',  # FuelCoin != FUEL
                 'HAV': 'Havecoin',
+                'LBTC': 'LiteBitcoin',
                 'LDC': 'LADACoin',
                 'MARKS': 'Bitmark',
                 'NET': 'NetCoin',
                 'QBT': 'Cubits',
                 'WRC': 'WarCoin',
+            },
+            'options': {
+                'fetchTickersErrors': True,
             },
         })
 
@@ -168,15 +174,12 @@ class cryptopia (Exchange):
 
     def fetch_order_books(self, symbols=None, params={}):
         self.load_markets()
-        ids = None
-        if not symbols:
-            numIds = len(self.ids)
-            # max URL length is 2083 characters, including http schema, hostname, tld, etc...
-            if numIds > 2048:
-                raise ExchangeError(self.id + ' has ' + str(numIds) + ' symbols exceeding max URL length, you are required to specify a list of symbols in the first argument to fetchOrderBooks')
-            ids = self.join_market_ids(self.ids)
-        else:
-            ids = self.join_market_ids(self.market_ids(symbols))
+        if symbols is None:
+            raise ExchangeError(self.id + ' fetchOrderBooks requires the symbols argument as of May 2018(up to 5 symbols at max)')
+        numSymbols = len(symbols)
+        if numSymbols > 5:
+            raise ExchangeError(self.id + ' fetchOrderBooks accepts 5 symbols at max')
+        ids = self.join_market_ids(self.market_ids(symbols))
         response = self.publicGetGetMarketOrderGroupsIds(self.extend({
             'ids': ids,
         }, params))
@@ -249,10 +252,12 @@ class cryptopia (Exchange):
             id = ticker['TradePairId']
             recognized = (id in list(self.markets_by_id.keys()))
             if not recognized:
-                raise ExchangeError(self.id + ' fetchTickers() returned unrecognized pair id ' + str(id))
-            market = self.markets_by_id[id]
-            symbol = market['symbol']
-            result[symbol] = self.parse_ticker(ticker, market)
+                if self.options['fetchTickersErrors']:
+                    raise ExchangeError(self.id + ' fetchTickers() returned unrecognized pair id ' + str(id))
+            else:
+                market = self.markets_by_id[id]
+                symbol = market['symbol']
+                result[symbol] = self.parse_ticker(ticker, market)
         return self.filter_by_array(result, 'symbol', symbols)
 
     def parse_trade(self, trade, market=None):
@@ -370,7 +375,7 @@ class cryptopia (Exchange):
 
     def fetch_balance(self, params={}):
         self.load_markets()
-        response = self.privatePostGetBalance()
+        response = self.privatePostGetBalance(params)
         balances = response['Data']
         result = {'info': response}
         for i in range(0, len(balances)):
@@ -406,29 +411,28 @@ class cryptopia (Exchange):
             raise ExchangeError(self.id + ' createOrder returned unknown error: ' + self.json(response))
         id = None
         filled = 0.0
+        status = 'open'
         if 'Data' in response:
             if 'OrderId' in response['Data']:
                 if response['Data']['OrderId']:
                     id = str(response['Data']['OrderId'])
-            if 'FilledOrders' in response['Data']:
-                filledOrders = response['Data']['FilledOrders']
-                filledOrdersLength = len(filledOrders)
-                if filledOrdersLength:
-                    filled = None
+                else:
+                    filled = amount
+                    status = 'closed'
         timestamp = self.milliseconds()
         order = {
             'id': id,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
             'lastTradeTimestamp': None,
-            'status': 'open',
+            'status': status,
             'symbol': symbol,
             'type': type,
             'side': side,
             'price': price,
             'cost': price * amount,
             'amount': amount,
-            'remaining': amount,
+            'remaining': amount - filled,
             'filled': filled,
             'fee': None,
             # 'trades': self.parse_trades(order['trades'], market),
@@ -520,12 +524,13 @@ class cryptopia (Exchange):
             else:
                 order = self.orders[id]
                 if order['status'] == 'open':
-                    self.orders[id] = self.extend(order, {
-                        'status': 'closed',
-                        'cost': order['amount'] * order['price'],
-                        'filled': order['amount'],
-                        'remaining': 0.0,
-                    })
+                    if (symbol is None) or (order['symbol'] == symbol):
+                        self.orders[id] = self.extend(order, {
+                            'status': 'closed',
+                            'cost': order['amount'] * order['price'],
+                            'filled': order['amount'],
+                            'remaining': 0.0,
+                        })
             order = self.orders[id]
             if (symbol is None) or (order['symbol'] == symbol):
                 result.append(order)
@@ -556,6 +561,7 @@ class cryptopia (Exchange):
         return result
 
     def fetch_deposit_address(self, code, params={}):
+        self.load_markets()
         currency = self.currency(code)
         response = self.privatePostGetDepositAddress(self.extend({
             'Currency': currency['id'],
@@ -572,6 +578,7 @@ class cryptopia (Exchange):
         }
 
     def withdraw(self, code, amount, address, tag=None, params={}):
+        self.load_markets()
         currency = self.currency(code)
         self.check_address(address)
         request = {
@@ -618,6 +625,8 @@ class cryptopia (Exchange):
                 if response['Success']:
                     return response
                 elif 'Error' in response:
-                    if response['Error'] == 'Insufficient Funds.':
-                        raise InsufficientFunds(self.id + ' ' + self.json(response))
+                    error = self.safe_string(response, 'error')
+                    if error is not None:
+                        if error.find('Insufficient Funds') >= 0:
+                            raise InsufficientFunds(self.id + ' ' + self.json(response))
         raise ExchangeError(self.id + ' ' + self.json(response))

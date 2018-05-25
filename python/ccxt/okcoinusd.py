@@ -119,7 +119,7 @@ class okcoinusd (Exchange):
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766791-89ffb502-5ee5-11e7-8a5b-c5950b68ac65.jpg',
                 'api': {
-                    'web': 'https://www.okcoin.com/v2',
+                    'web': 'https://www.okcoin.com/v2/spot',
                     'public': 'https://www.okcoin.com/api',
                     'private': 'https://www.okcoin.com/api',
                 },
@@ -138,6 +138,7 @@ class okcoinusd (Exchange):
             'exceptions': {
                 '1009': OrderNotFound,  # for spot markets, cancelling closed order
                 '1051': OrderNotFound,  # for spot markets, cancelling "just closed" order
+                '1019': OrderNotFound,  # order closed?
                 '20015': OrderNotFound,  # for future markets
                 '1013': InvalidOrder,  # no contract type(PR-1101)
                 '1027': InvalidOrder,  # createLimitBuyOrder(symbol, 0, 0): Incorrect parameter may exceeded limits
@@ -182,6 +183,8 @@ class okcoinusd (Exchange):
             minAmount = markets[i]['minTradeSize']
             minPrice = math.pow(10, -precision['price'])
             active = (markets[i]['online'] != 0)
+            baseNumericId = markets[i]['baseCurrency']
+            quoteNumericId = markets[i]['quoteCurrency']
             market = self.extend(self.fees['trading'], {
                 'id': id,
                 'symbol': symbol,
@@ -189,6 +192,8 @@ class okcoinusd (Exchange):
                 'quote': quote,
                 'baseId': baseId,
                 'quoteId': quoteId,
+                'baseNumericId': baseNumericId,
+                'quoteNumericId': quoteNumericId,
                 'info': markets[i],
                 'type': 'spot',
                 'spot': True,
@@ -492,9 +497,11 @@ class okcoinusd (Exchange):
         createDateField = self.get_create_date_field()
         if createDateField in order:
             timestamp = order[createDateField]
-        amount = order['amount']
-        filled = order['deal_amount']
+        amount = self.safe_float(order, 'amount')
+        filled = self.safe_float(order, 'deal_amount')
         remaining = amount - filled
+        if type == 'market':
+            remaining = 0
         average = self.safe_float(order, 'avg_price')
         # https://github.com/ccxt/ccxt/issues/2452
         average = self.safe_float(order, 'price_avg', average)
@@ -649,7 +656,9 @@ class okcoinusd (Exchange):
         url = '/'
         if api != 'web':
             url += self.version + '/'
-        url += path + self.extension
+        url += path
+        if api != 'web':
+            url += self.extension
         if api == 'private':
             self.check_required_credentials()
             query = self.keysort(self.extend({
