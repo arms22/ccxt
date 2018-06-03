@@ -26,6 +26,7 @@ __all__ = [
     'NotSupported',
     'AuthenticationError',
     'PermissionDenied',
+    'NotFound',
     'InsufficientFunds',
     'InvalidOrder',
     'OrderNotFound',
