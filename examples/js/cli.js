@@ -2,12 +2,17 @@
 
 //-----------------------------------------------------------------------------
 
-const [processPath, , exchangeId, methodName, ... params] = process.argv.filter (x => !x.startsWith ('--'))
-const verbose = process.argv.includes ('--verbose')
-const cloudscrape = process.argv.includes ('--cloudscrape')
-const cfscrape = process.argv.includes ('--cfscrape')
-const poll = process.argv.includes ('--poll')
-const loadMarkets = process.argv.includes ('--load-markets')
+let [processPath, , exchangeId, methodName, ... params] = process.argv.filter (x => !x.startsWith ('--'))
+    , verbose = process.argv.includes ('--verbose')
+    , cloudscrape = process.argv.includes ('--cloudscrape')
+    , cfscrape = process.argv.includes ('--cfscrape')
+    , poll = process.argv.includes ('--poll')
+    , no_send = process.argv.includes ('--no-send')
+    , no_load_markets = process.argv.includes ('--no-load-markets')
+    , details = process.argv.includes ('--details')
+    , no_table = process.argv.includes ('--no-table')
+    , iso8601 = process.argv.includes ('--iso8601')
+    , no_info = process.argv.includes ('--no-info')
 
 //-----------------------------------------------------------------------------
 
@@ -17,7 +22,7 @@ const ccxt         = require ('../../ccxt.js')
     , asTable      = require ('as-table')
     , util         = require ('util')
     , { execSync } = require ('child_process')
-    , log          = require ('ololog').configure ({ locate: false })
+    , log          = require ('ololog').configure ({ locate: false }).unlimited
     , { ExchangeError, NetworkError } = ccxt
 
 
@@ -72,7 +77,19 @@ const cfscrapeCookies = (url) => {
 //-----------------------------------------------------------------------------
 
 const timeout = 30000
-const exchange = new (ccxt)[exchangeId] ({ verbose, timeout })
+let exchange = undefined
+const enableRateLimit = true
+
+try {
+
+    exchange = new (ccxt)[exchangeId] ({ verbose, timeout, enableRateLimit })
+
+} catch (e) {
+
+    log.red (e)
+    printUsage ()
+    process.exit ()
+}
 
 //-----------------------------------------------------------------------------
 
@@ -88,7 +105,7 @@ Object.assign (exchange, settings)
 
 //-----------------------------------------------------------------------------
 
-let printSupportedExchanges = function () {
+function printSupportedExchanges () {
     log ('Supported exchanges:', ccxt.exchanges.join (', ').green)
 }
 
@@ -102,28 +119,66 @@ let printSupportedExchanges = function () {
     log ('node', process.argv[1], 'bitfinex fetchBalance')
     log ('node', process.argv[1], 'kraken fetchOrderBook ETH/BTC')
     printSupportedExchanges ()
+    log ('Supported options:')
+    log ('--verbose         Print verbose output')
+    log ('--cloudscrape     Use https://github.com/codemanki/cloudscraper to bypass Cloudflare')
+    log ('--cfscrape        Use https://github.com/Anorov/cloudflare-scrape to bypass Cloudflare (requires python and cfscrape)')
+    log ('--poll            Repeat continuously in rate-limited mode')
+    log ("--no-send         Print the request but don't actually send it to the exchange (sets verbose and load-markets)")
+    log ('--no-load-markets Do not pre-load markets (for debugging)')
+    log ('--details         Print detailed fetch responses')
+    log ('--no-table        Do not print tabulated fetch responses')
+    log ('--iso8601         Print timestamps as ISO8601 datetimes')
 }
 
 //-----------------------------------------------------------------------------
 
-const printHumanReadable = (result) => {
+const printHumanReadable = (exchange, result) => {
 
     if (Array.isArray (result)) {
 
         let arrayOfObjects = (typeof result[0] === 'object')
 
-        result.forEach (object => {
-            if (arrayOfObjects)
-                log ('-------------------------------------------')
-            log (object)
-        })
+        if (details)
+            result.forEach (object => {
+                if (arrayOfObjects)
+                    log ('-------------------------------------------')
+                log (object)
+            })
 
-        if (arrayOfObjects)
-            log (result.length > 0 ? asTable (result) : result)
+        if (!no_table)
+            if (arrayOfObjects) {
+                log (result.length > 0 ? asTable (result.map (element => {
+                    let keys = Object.keys (element)
+                    if (no_info) {
+                        delete element['info']
+                    }
+                    keys.forEach (key => {
+                        if (typeof element[key] === 'number') {
+                            if (!iso8601)
+                                return element[key]
+                            try {
+                                const iso8601 = exchange.iso8601 (element[key])
+                                if (iso8601.match (/^20[0-9]{2}[-]?/))
+                                    element[key] = iso8601
+                                else
+                                    throw new Error ('wrong date')
+                            } catch (e) {
+                                return element[key]
+                            }
+                        }
+                    })
+                    return element
+                })) : result)
+                log (result.length, 'objects');
+            } else {
+                log (result)
+                log (result.length, 'objects');
+            }
 
     } else {
 
-        log.maxDepth (10).maxArrayLength (1000) (result)
+        log (result)
     }
 }
 
@@ -144,6 +199,8 @@ async function main () {
                 return undefined
             if (param[0] === '{' || param[0] === '[')
                 return JSON.parse (param)
+            if (param.match (/[0-9]{4}[-]?[0-9]{2}[-]?[0-9]{2}[T\s]?[0-9]{2}[:]?[0-9]{2}[:]?[0-9]{2}/g))
+                return exchange.parse8601 (param)
             if (param.match (/[a-zA-Z-]/g))
                 return param
             if (param.match (/^[+0-9\.-]+$/))
@@ -159,8 +216,27 @@ async function main () {
         if (cfscrape)
             exchange.headers = cfscrapeCookies (www)
 
-        if (loadMarkets)
+        no_load_markets = no_send ? true : no_load_markets
+
+        if (!no_load_markets) {
             await exchange.loadMarkets ()
+        }
+
+        if (no_send) {
+
+            exchange.verbose = no_send
+            exchange.fetch = function fetch (url, method = 'GET', headers = undefined, body = undefined) {
+                log.dim.noLocate ('-------------------------------------------')
+                log.dim.noLocate (exchange.iso8601 (exchange.milliseconds ()))
+                log.green.unlimited ({
+                    url,
+                    method,
+                    headers,
+                    body,
+                })
+                process.exit ()
+            }
+        }
 
         if (typeof exchange[methodName] === 'function') {
 
@@ -171,7 +247,7 @@ async function main () {
                 try {
 
                     const result = await exchange[methodName] (... args)
-                    printHumanReadable (result)
+                    printHumanReadable (exchange, result)
 
                 } catch (e) {
 
@@ -202,7 +278,7 @@ async function main () {
 
         } else {
 
-            printHumanReadable (exchange[methodName])
+            printHumanReadable (exchange, exchange[methodName])
         }
     }
 }

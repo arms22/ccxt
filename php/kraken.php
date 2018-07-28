@@ -13,9 +13,10 @@ class kraken extends Exchange {
         return array_replace_recursive (parent::describe (), array (
             'id' => 'kraken',
             'name' => 'Kraken',
-            'countries' => 'US',
+            'countries' => array ( 'US' ),
             'version' => '0',
             'rateLimit' => 3000,
+            'certified' => true,
             'has' => array (
                 'createDepositAddress' => true,
                 'fetchDepositAddress' => true,
@@ -212,13 +213,14 @@ class kraken extends Exchange {
 
     public function fetch_min_order_sizes () {
         $html = null;
+        $oldParseJsonResponse = $this->parseJsonResponse;
         try {
             $this->parseJsonResponse = false;
             $html = $this->zendeskGet205893708WhatIsTheMinimumOrderSize ();
-            $this->parseJsonResponse = true;
+            $this->parseJsonResponse = $oldParseJsonResponse;
         } catch (Exception $e) {
             // ensure parseJsonResponse is restored no matter what
-            $this->parseJsonResponse = true;
+            $this->parseJsonResponse = $oldParseJsonResponse;
             throw $e;
         }
         $parts = explode ('ul>', $html);
@@ -307,7 +309,8 @@ class kraken extends Exchange {
         return $result;
     }
 
-    public function append_inactive_markets ($result = []) {
+    public function append_inactive_markets ($result) {
+        // $result should be an array to append to
         $precision = array ( 'amount' => 8, 'price' => 8 );
         $costLimits = array ( 'min' => 0, 'max' => null );
         $priceLimits = array ( 'min' => pow (10, -$precision['price']), 'max' => null );
@@ -350,7 +353,6 @@ class kraken extends Exchange {
                 'info' => $currency,
                 'name' => $code,
                 'active' => true,
-                'status' => 'ok',
                 'fee' => null,
                 'precision' => $precision,
                 'limits' => array (
@@ -525,7 +527,7 @@ class kraken extends Exchange {
             $market = $this->find_market_by_altname_or_id ($trade['pair']);
         if (is_array ($trade) && array_key_exists ('ordertxid', $trade)) {
             $order = $trade['ordertxid'];
-            $id = $trade['id'];
+            $id = $this->safe_string_2($trade, 'id', 'postxid');
             $timestamp = intval ($trade['time'] * 1000);
             $side = $trade['type'];
             $type = $trade['ordertype'];
@@ -629,8 +631,13 @@ class kraken extends Exchange {
             'ordertype' => $type,
             'volume' => $this->amount_to_precision($symbol, $amount),
         );
-        if ($type === 'limit')
+        $priceIsDefined = ($price !== null);
+        $marketOrder = ($type === 'market');
+        $limitOrder = ($type === 'limit');
+        $shouldIncludePrice = $limitOrder || (!$marketOrder && $priceIsDefined);
+        if ($shouldIncludePrice) {
             $order['price'] = $this->price_to_precision($symbol, $price);
+        }
         $response = $this->privatePostAddOrder (array_merge ($order, $params));
         $id = $this->safe_value($response['result'], 'txid');
         if ($id !== null) {
@@ -668,8 +675,10 @@ class kraken extends Exchange {
         $fee = null;
         $cost = $this->safe_float($order, 'cost');
         $price = $this->safe_float($description, 'price');
-        if (!$price)
-            $price = $this->safe_float($order, 'price');
+        if (($price === null) || ($price === 0))
+            $price = $this->safe_float($description, 'price2');
+        if (($price === null) || ($price === 0))
+            $price = $this->safe_float($order, 'price', $price);
         if ($market !== null) {
             $symbol = $market['symbol'];
             if (is_array ($order) && array_key_exists ('fee', $order)) {
@@ -811,7 +820,6 @@ class kraken extends Exchange {
         return array (
             'currency' => $code,
             'address' => $address,
-            'status' => 'ok',
             'info' => $response,
         );
     }
@@ -845,7 +853,6 @@ class kraken extends Exchange {
         return array (
             'currency' => $code,
             'address' => $address,
-            'status' => 'ok',
             'info' => $response,
         );
     }
@@ -911,7 +918,7 @@ class kraken extends Exchange {
             throw new InvalidOrder ($this->id . ' ' . $body);
         if ($body[0] === '{') {
             $response = json_decode ($body, $as_associative_array = true);
-            if (gettype ($response) != 'string') {
+            if (gettype ($response) !== 'string') {
                 if (is_array ($response) && array_key_exists ('error', $response)) {
                     $numErrors = is_array ($response['error']) ? count ($response['error']) : 0;
                     if ($numErrors) {

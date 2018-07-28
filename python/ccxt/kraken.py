@@ -32,9 +32,10 @@ class kraken (Exchange):
         return self.deep_extend(super(kraken, self).describe(), {
             'id': 'kraken',
             'name': 'Kraken',
-            'countries': 'US',
+            'countries': ['US'],
             'version': '0',
             'rateLimit': 3000,
+            'certified': True,
             'has': {
                 'createDepositAddress': True,
                 'fetchDepositAddress': True,
@@ -228,13 +229,14 @@ class kraken (Exchange):
 
     def fetch_min_order_sizes(self):
         html = None
+        oldParseJsonResponse = self.parseJsonResponse
         try:
             self.parseJsonResponse = False
             html = self.zendeskGet205893708WhatIsTheMinimumOrderSize()
-            self.parseJsonResponse = True
+            self.parseJsonResponse = oldParseJsonResponse
         except Exception as e:
             # ensure parseJsonResponse is restored no matter what
-            self.parseJsonResponse = True
+            self.parseJsonResponse = oldParseJsonResponse
             raise e
         parts = html.split('ul>')
         ul = parts[1]
@@ -316,7 +318,8 @@ class kraken (Exchange):
         self.marketsByAltname = self.index_by(result, 'altname')
         return result
 
-    def append_inactive_markets(self, result=[]):
+    def append_inactive_markets(self, result):
+        # result should be an array to append to
         precision = {'amount': 8, 'price': 8}
         costLimits = {'min': 0, 'max': None}
         priceLimits = {'min': math.pow(10, -precision['price']), 'max': None}
@@ -357,7 +360,6 @@ class kraken (Exchange):
                 'info': currency,
                 'name': code,
                 'active': True,
-                'status': 'ok',
                 'fee': None,
                 'precision': precision,
                 'limits': {
@@ -519,7 +521,7 @@ class kraken (Exchange):
             market = self.find_market_by_altname_or_id(trade['pair'])
         if 'ordertxid' in trade:
             order = trade['ordertxid']
-            id = trade['id']
+            id = self.safe_string_2(trade, 'id', 'postxid')
             timestamp = int(trade['time'] * 1000)
             side = trade['type']
             type = trade['ordertype']
@@ -615,7 +617,11 @@ class kraken (Exchange):
             'ordertype': type,
             'volume': self.amount_to_precision(symbol, amount),
         }
-        if type == 'limit':
+        priceIsDefined = (price is not None)
+        marketOrder = (type == 'market')
+        limitOrder = (type == 'limit')
+        shouldIncludePrice = limitOrder or (not marketOrder and priceIsDefined)
+        if shouldIncludePrice:
             order['price'] = self.price_to_precision(symbol, price)
         response = self.privatePostAddOrder(self.extend(order, params))
         id = self.safe_value(response['result'], 'txid')
@@ -649,8 +655,10 @@ class kraken (Exchange):
         fee = None
         cost = self.safe_float(order, 'cost')
         price = self.safe_float(description, 'price')
-        if not price:
-            price = self.safe_float(order, 'price')
+        if (price is None) or (price == 0):
+            price = self.safe_float(description, 'price2')
+        if (price is None) or (price == 0):
+            price = self.safe_float(order, 'price', price)
         if market is not None:
             symbol = market['symbol']
             if 'fee' in order:
@@ -778,7 +786,6 @@ class kraken (Exchange):
         return {
             'currency': code,
             'address': address,
-            'status': 'ok',
             'info': response,
         }
 
@@ -809,7 +816,6 @@ class kraken (Exchange):
         return {
             'currency': code,
             'address': address,
-            'status': 'ok',
             'info': response,
         }
 

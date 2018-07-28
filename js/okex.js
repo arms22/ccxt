@@ -29,11 +29,14 @@ module.exports = class okex extends okcoinusd {
                 'fees': 'https://www.okex.com/fees.html',
             },
             'commonCurrencies': {
+                'CAN': 'Content And AD Network',
                 'FAIR': 'FairGame',
-                'HMC': 'Hi Mutual Society',
+                'HOT': 'Hydro Protocol',
                 'MAG': 'Maggie',
-                'NANO': 'XRB',
                 'YOYO': 'YOYOW',
+            },
+            'options': {
+                'fetchTickersMethod': 'fetch_tickers_from_api',
             },
         });
     }
@@ -73,7 +76,7 @@ module.exports = class okex extends okcoinusd {
         return markets;
     }
 
-    async fetchTickers (symbols = undefined, params = {}) {
+    async fetchTickersFromApi (symbols = undefined, params = {}) {
         await this.loadMarkets ();
         let request = {};
         let response = await this.publicGetTickers (this.extend (request, params));
@@ -93,5 +96,25 @@ module.exports = class okex extends okcoinusd {
             result[symbol] = ticker;
         }
         return result;
+    }
+
+    async fetchTickersFromWeb (symbols = undefined, params = {}) {
+        await this.loadMarkets ();
+        let request = {};
+        let response = await this.webGetSpotMarketsTickers (this.extend (request, params));
+        let tickers = response['data'];
+        let result = {};
+        for (let i = 0; i < tickers.length; i++) {
+            let ticker = this.parseTicker (tickers[i]);
+            let symbol = ticker['symbol'];
+            result[symbol] = ticker;
+        }
+        return result;
+    }
+
+    async fetchTickers (symbols = undefined, params = {}) {
+        let method = this.options['fetchTickersMethod'];
+        let response = await this[method] (symbols, params);
+        return response;
     }
 };

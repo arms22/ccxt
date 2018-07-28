@@ -12,7 +12,7 @@ module.exports = class bxinth extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'bxinth',
             'name': 'BX.in.th',
-            'countries': 'TH', // Thailand
+            'countries': [ 'TH' ], // Thailand
             'rateLimit': 1500,
             'has': {
                 'CORS': false,
@@ -183,7 +183,7 @@ module.exports = class bxinth extends Exchange {
     }
 
     parseTrade (trade, market) {
-        let timestamp = this.parse8601 (trade['trade_date']);
+        let timestamp = this.parse8601 (trade['trade_date'] + '+07:00'); // Thailand UTC+7 offset
         return {
             'id': trade['trade_id'],
             'info': trade,

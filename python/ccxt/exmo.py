@@ -34,6 +34,7 @@ class exmo (Exchange):
             'has': {
                 'CORS': False,
                 'fetchClosedOrders': 'emulated',
+                'fetchDepositAddress': True,
                 'fetchOpenOrders': True,
                 'fetchOrder': 'emulated',
                 'fetchOrders': 'emulated',
@@ -193,7 +194,7 @@ class exmo (Exchange):
     def fetch_order_books(self, symbols=None, params={}):
         self.load_markets()
         ids = None
-        if not symbols:
+        if symbols is None:
             ids = ','.join(self.ids)
             # max URL length is 2083 symbols, including http schema, hostname, tld, etc...
             if len(ids) > 2048:
@@ -512,6 +513,26 @@ class exmo (Exchange):
             'trades': trades,
             'fee': fee,
             'info': order,
+        }
+
+    def fetch_deposit_address(self, code, params={}):
+        self.load_markets()
+        response = self.privatePostDepositAddress(params)
+        depositAddress = self.safe_string(response, code)
+        address = None
+        tag = None
+        if depositAddress:
+            addressAndTag = depositAddress.split(',')
+            address = addressAndTag[0]
+            numParts = len(addressAndTag)
+            if numParts > 1:
+                tag = addressAndTag[1]
+        self.check_address(address)
+        return {
+            'currency': code,
+            'address': address,
+            'tag': tag,
+            'info': response,
         }
 
     def get_market_from_trades(self, trades):

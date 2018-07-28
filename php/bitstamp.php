@@ -13,7 +13,7 @@ class bitstamp extends Exchange {
         return array_replace_recursive (parent::describe (), array (
             'id' => 'bitstamp',
             'name' => 'Bitstamp',
-            'countries' => 'GB',
+            'countries' => array ( 'GB' ),
             'rateLimit' => 1000,
             'version' => 'v2',
             'has' => array (
@@ -142,6 +142,9 @@ class bitstamp extends Exchange {
                         'EUR' => 0,
                     ),
                 ),
+            ),
+            'exceptions' => array (
+                'No permission found' => '\\ccxt\\PermissionDenied',
             ),
         ));
     }
@@ -380,12 +383,12 @@ class bitstamp extends Exchange {
         $method = 'privatePost' . $this->capitalize ($side);
         $order = array (
             'pair' => $this->market_id($symbol),
-            'amount' => $amount,
+            'amount' => $this->amount_to_precision($symbol, $amount),
         );
         if ($type === 'market')
             $method .= 'Market';
         else
-            $order['price'] = $price;
+            $order['price'] = $this->price_to_precision($symbol, $price);
         $method .= 'Pair';
         $response = $this->$method (array_merge ($order, $params));
         return array (
@@ -466,14 +469,13 @@ class bitstamp extends Exchange {
         $cost = null;
         if ($transactions !== null) {
             if (gettype ($transactions) === 'array' && count (array_filter (array_keys ($transactions), 'is_string')) == 0) {
+                $feeCost = 0.0;
                 for ($i = 0; $i < count ($transactions); $i++) {
                     $trade = $this->parse_trade(array_merge (array (
                         'order_id' => $id,
                         'side' => $side,
                     ), $transactions[$i]), $market);
                     $filled .= $trade['amount'];
-                    if ($feeCost === null)
-                        $feeCost = 0.0;
                     $feeCost .= $trade['fee']['cost'];
                     if ($cost === null)
                         $cost = 0.0;
@@ -534,8 +536,8 @@ class bitstamp extends Exchange {
 
     public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
         $market = null;
+        $this->load_markets();
         if ($symbol !== null) {
-            $this->load_markets();
             $market = $this->market ($symbol);
         }
         $orders = $this->privatePostOpenOrdersAll ();
@@ -571,7 +573,6 @@ class bitstamp extends Exchange {
         $this->check_address($address);
         return array (
             'currency' => $code,
-            'status' => 'ok',
             'address' => $address,
             'tag' => $tag,
             'info' => $response,
@@ -634,12 +635,18 @@ class bitstamp extends Exchange {
     }
 
     public function handle_errors ($httpCode, $reason, $url, $method, $headers, $body) {
-        if (gettype ($body) != 'string')
-            return; // fallback to default error handler
+        if (gettype ($body) !== 'string')
+            return; // fallback to default $error handler
         if (strlen ($body) < 2)
-            return; // fallback to default error handler
+            return; // fallback to default $error handler
         if (($body[0] === '{') || ($body[0] === '[')) {
             $response = json_decode ($body, $as_associative_array = true);
+            // fetchDepositAddress returns array ("$error" => "No permission found") on apiKeys that don't have the permission required
+            $error = $this->safe_string($response, 'error');
+            $exceptions = $this->exceptions;
+            if (is_array ($exceptions) && array_key_exists ($error, $exceptions)) {
+                throw new $exceptions[$error] ($this->id . ' ' . $body);
+            }
             $status = $this->safe_string($response, 'status');
             if ($status === 'error') {
                 $code = $this->safe_string($response, 'code');
@@ -647,7 +654,7 @@ class bitstamp extends Exchange {
                     if ($code === 'API0005')
                         throw new AuthenticationError ($this->id . ' invalid signature, use the uid for the main account if you have subaccounts');
                 }
-                throw new ExchangeError ($this->id . ' ' . $this->json ($response));
+                throw new ExchangeError ($this->id . ' ' . $body);
             }
         }
     }

@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 const huobipro = require ('./huobipro.js');
-const { ExchangeError, ExchangeNotAvailable, AuthenticationError, InvalidOrder, InsufficientFunds } = require ('./base/errors');
+const { ExchangeError, ExchangeNotAvailable, AuthenticationError, InvalidOrder, InsufficientFunds, OrderNotFound } = require ('./base/errors');
+const { ROUND, TRUNCATE } = require ('./base/functions/number');
 
 // ---------------------------------------------------------------------------
 
@@ -12,12 +13,18 @@ module.exports = class cointiger extends huobipro {
         return this.deepExtend (super.describe (), {
             'id': 'cointiger',
             'name': 'CoinTiger',
-            'countries': 'CN',
-            'hostname': 'api.cointiger.com',
+            'countries': [ 'CN' ],
+            'hostname': 'api.cointiger.pro',
             'has': {
                 'fetchCurrencies': false,
                 'fetchTickers': true,
-                'fetchOrder': false,
+                'fetchTradingLimits': false,
+                'fetchOrder': true,
+                'fetchOrders': false,
+                'fetchOpenOrders': true,
+                'fetchClosedOrders': true,
+                'fetchOrderTrades': false, // not tested yet
+                'cancelOrders': true,
             },
             'headers': {
                 'Language': 'en_US',
@@ -25,15 +32,35 @@ module.exports = class cointiger extends huobipro {
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/39797261-d58df196-5363-11e8-9880-2ec78ec5bd25.jpg',
                 'api': {
-                    'public': 'https://api.cointiger.com/exchange/trading/api/market',
-                    'private': 'https://api.cointiger.com/exchange/trading/api',
-                    'exchange': 'https://www.cointiger.com/exchange',
+                    'public': 'https://api.cointiger.pro/exchange/trading/api/market',
+                    'private': 'https://api.cointiger.pro/exchange/trading/api',
+                    'exchange': 'https://www.cointiger.pro/exchange',
+                    'v2public': 'https://api.cointiger.pro/exchange/trading/api/v2',
+                    'v2': 'https://api.cointiger.pro/exchange/trading/api/v2',
                 },
-                'www': 'https://www.cointiger.com',
-                'referral': 'https://www.cointiger.com/exchange/register.html?refCode=FfvDtt',
+                'www': 'https://www.cointiger.pro',
+                'referral': 'https://www.cointiger.pro/exchange/register.html?refCode=FfvDtt',
                 'doc': 'https://github.com/cointiger/api-docs-en/wiki',
             },
             'api': {
+                'v2public': {
+                    'get': [
+                        'timestamp',
+                        'currencys',
+                    ],
+                },
+                'v2': {
+                    'get': [
+                        'order/orders',
+                        'order/match_results',
+                        'order/make_detail',
+                        'order/details',
+                    ],
+                    'post': [
+                        'order',
+                        'order/batch_cancel',
+                    ],
+                },
                 'public': {
                     'get': [
                         'history/kline', // 获取K线数据
@@ -65,10 +92,22 @@ module.exports = class cointiger extends huobipro {
                     ],
                 },
             },
+            'fees': {
+                'trading': {
+                    'tierBased': false,
+                    'percentage': true,
+                    'maker': 0.001,
+                    'taker': 0.001,
+                },
+            },
             'exceptions': {
-                '1': InsufficientFunds,
+                //    {"code":"1","msg":"系统错误","data":null}
+                //    {“code”:“1",“msg”:“Balance insufficient,余额不足“,”data”:null}
+                '1': ExchangeError,
                 '2': ExchangeError,
                 '5': InvalidOrder,
+                '6': InvalidOrder,
+                '8': OrderNotFound,
                 '16': AuthenticationError, // funding password not set
                 '100001': ExchangeError,
                 '100002': ExchangeNotAvailable,
@@ -79,62 +118,79 @@ module.exports = class cointiger extends huobipro {
     }
 
     async fetchMarkets () {
-        this.parseJsonResponse = false;
-        let response = await this.exchangeGetFooterTradingruleHtml ();
-        this.parseJsonResponse = true;
-        let rows = response.split ('<tr>');
-        let numRows = rows.length;
-        let limit = numRows - 1;
-        let result = [];
-        for (let i = 1; i < limit; i++) {
-            let row = rows[i];
-            let parts = row.split ('<span style="color:#ffffff">');
-            let numParts = parts.length;
-            if ((numParts < 6) || (parts[1].indexOf ('Kind&nbsp') >= 0))
-                continue;
-            let id = parts[1].split ('</span>')[0];
-            let minAmount = parts[2].split ('</span>')[0];
-            let minPrice = parts[4].split ('</span>')[0];
-            let precision = {
-                'amount': this.precisionFromString (minAmount),
-                'price': this.precisionFromString (minPrice),
-            };
-            id = id.split ('&nbsp')[0];
-            let [ baseId, quoteId ] = id.split ('/');
-            let base = this.commonCurrencyCode (baseId);
-            let quote = this.commonCurrencyCode (quoteId);
-            baseId = baseId.toLowerCase ();
-            quoteId = quoteId.toLowerCase ();
-            id = baseId + quoteId;
-            let symbol = base + '/' + quote;
-            result.push ({
-                'id': id,
-                'uppercaseId': id.toUpperCase (),
-                'symbol': symbol,
-                'base': base,
-                'quote': quote,
-                'baseId': baseId,
-                'quoteId': quoteId,
-                'active': true,
-                'precision': precision,
-                'taker': 0.001,
-                'maker': 0.001,
-                'limits': {
-                    'amount': {
-                        'min': parseFloat (minAmount),
-                        'max': undefined,
+        const response = await this.v2publicGetCurrencys ();
+        //
+        //     {
+        //         code: '0',
+        //         msg: 'suc',
+        //         data: {
+        //             'bitcny-partition': [
+        //                 {
+        //                     baseCurrency: 'btc',
+        //                     quoteCurrency: 'bitcny',
+        //                     pricePrecision: 2,
+        //                     amountPrecision: 4,
+        //                     withdrawFeeMin: 0.0005,
+        //                     withdrawFeeMax: 0.005,
+        //                     withdrawOneMin: 0.01,
+        //                     withdrawOneMax: 10,
+        //                     depthSelect: { step0: '0.01', step1: '0.1', step2: '1' }
+        //                 },
+        //                 ...
+        //             ],
+        //             ...
+        //         },
+        //     }
+        //
+        const keys = Object.keys (response['data']);
+        const result = [];
+        for (let i = 0; i < keys.length; i++) {
+            let key = keys[i];
+            let partition = response['data'][key];
+            for (let j = 0; j < partition.length; j++) {
+                let market = partition[j];
+                let baseId = this.safeString (market, 'baseCurrency');
+                let quoteId = this.safeString (market, 'quoteCurrency');
+                let base = baseId.toUpperCase ();
+                let quote = quoteId.toUpperCase ();
+                base = this.commonCurrencyCode (base);
+                quote = this.commonCurrencyCode (quote);
+                let id = baseId + quoteId;
+                let uppercaseId = id.toUpperCase ();
+                let symbol = base + '/' + quote;
+                let precision = {
+                    'amount': market['amountPrecision'],
+                    'price': market['pricePrecision'],
+                };
+                let active = true;
+                let entry = {
+                    'id': id,
+                    'uppercaseId': uppercaseId,
+                    'symbol': symbol,
+                    'base': base,
+                    'quote': quote,
+                    'baseId': baseId,
+                    'quoteId': quoteId,
+                    'info': market,
+                    'active': active,
+                    'precision': precision,
+                    'limits': {
+                        'amount': {
+                            'min': Math.pow (10, -precision['amount']),
+                            'max': undefined,
+                        },
+                        'price': {
+                            'min': Math.pow (10, -precision['price']),
+                            'max': undefined,
+                        },
+                        'cost': {
+                            'min': 0,
+                            'max': undefined,
+                        },
                     },
-                    'price': {
-                        'min': parseFloat (minPrice),
-                        'max': undefined,
-                    },
-                    'cost': {
-                        'min': 0,
-                        'max': undefined,
-                    },
-                },
-                'info': undefined,
-            });
+                };
+                result.push (entry);
+            }
         }
         this.options['marketsByUppercaseId'] = this.indexBy (result, 'uppercaseId');
         return result;
@@ -193,7 +249,7 @@ module.exports = class cointiger extends huobipro {
     async fetchTicker (symbol, params = {}) {
         await this.loadMarkets ();
         let market = this.market (symbol);
-        let marketId = market['id'];
+        let marketId = market['uppercaseId'];
         let response = await this.exchangeGetApiPublicMarketDetail (params);
         if (!(marketId in response))
             throw new ExchangeError (this.id + ' fetchTicker symbol ' + symbol + ' (' + marketId + ') not found');
@@ -212,6 +268,7 @@ module.exports = class cointiger extends huobipro {
             if (id in this.options['marketsByUppercaseId']) {
                 // this endpoint returns uppercase ids
                 symbol = this.options['marketsByUppercaseId'][id]['symbol'];
+                market = this.options['marketsByUppercaseId'][id];
             }
             result[symbol] = this.parseTicker (response[id], market);
         }
@@ -219,6 +276,19 @@ module.exports = class cointiger extends huobipro {
     }
 
     parseTrade (trade, market = undefined) {
+        //
+        //   {      volume: "0.014",
+        //          symbol: "ethbtc",
+        //         buy_fee: "0.00001400",
+        //         orderId:  32235710,
+        //           price: "0.06923825",
+        //         created:  1531605169000,
+        //              id:  3785005,
+        //          source:  1,
+        //            type: "buy-limit",
+        //     bid_user_id:  326317         } ] }
+        //
+        // --------------------------------------------------------------------
         //
         //     {
         //         "volume": {
@@ -240,43 +310,66 @@ module.exports = class cointiger extends huobipro {
         //         "id": 138
         //     }
         //
-        let side = this.safeString (trade, 'side');
+        let id = this.safeString (trade, 'id');
+        let orderId = this.safeString (trade, 'orderId');
+        let orderType = this.safeString (trade, 'type');
+        let type = undefined;
+        let side = undefined;
+        if (typeof orderType !== 'undefined') {
+            let parts = orderType.split ('-');
+            side = parts[0];
+            type = parts[1];
+        }
+        side = this.safeString (trade, 'side', side);
         let amount = undefined;
         let price = undefined;
         let cost = undefined;
-        if (typeof side !== 'undefined') {
-            side = side.toLowerCase ();
-            price = this.safeFloat (trade, 'price');
-            amount = this.safeFloat (trade, 'amount');
-        } else {
+        if (typeof side === 'undefined') {
             price = this.safeFloat (trade['price'], 'amount');
             amount = this.safeFloat (trade['volume'], 'amount');
             cost = this.safeFloat (trade['deal_price'], 'amount');
+        } else {
+            side = side.toLowerCase ();
+            price = this.safeFloat (trade, 'price');
+            amount = this.safeFloat2 (trade, 'amount', 'volume');
+        }
+        let fee = undefined;
+        if (typeof side !== 'undefined') {
+            let feeCostField = side + '_fee';
+            let feeCost = this.safeFloat (trade, feeCostField);
+            if (typeof feeCost !== 'undefined') {
+                let feeCurrency = undefined;
+                if (typeof market !== 'undefined') {
+                    feeCurrency = market['base'];
+                }
+                fee = {
+                    'cost': feeCost,
+                    'currency': feeCurrency,
+                };
+            }
         }
         if (typeof amount !== 'undefined')
             if (typeof price !== 'undefined')
                 if (typeof cost === 'undefined')
                     cost = amount * price;
-        let timestamp = this.safeValue (trade, 'created_at');
-        if (typeof timestamp === 'undefined')
-            timestamp = this.safeValue (trade, 'ts');
-        let iso8601 = (typeof timestamp !== 'undefined') ? this.iso8601 (timestamp) : undefined;
+        let timestamp = this.safeInteger2 (trade, 'created_at', 'ts');
+        timestamp = this.safeInteger (trade, 'created', timestamp);
         let symbol = undefined;
         if (typeof market !== 'undefined')
             symbol = market['symbol'];
         return {
             'info': trade,
-            'id': trade['id'].toString (),
-            'order': undefined,
+            'id': id,
+            'order': orderId,
             'timestamp': timestamp,
-            'datetime': iso8601,
+            'datetime': this.iso8601 (timestamp),
             'symbol': symbol,
-            'type': undefined,
+            'type': type,
             'side': side,
             'price': price,
             'amount': amount,
             'cost': cost,
-            'fee': undefined,
+            'fee': fee,
         };
     }
 
@@ -351,11 +444,41 @@ module.exports = class cointiger extends huobipro {
             }
             let account = this.account ();
             account['used'] = parseFloat (balance['lock']);
-            account['free'] = balance['normal'];
+            account['free'] = parseFloat (balance['normal']);
             account['total'] = this.sum (account['used'], account['free']);
             result[code] = account;
         }
         return this.parseBalance (result);
+    }
+
+    async fetchOrderTrades (id, symbol = undefined, since = undefined, limit = undefined, params = {}) {
+        if (typeof symbol === 'undefined') {
+            throw new ExchangeError (this.id + ' fetchOrderTrades requires a symbol argument');
+        }
+        await this.loadMarkets ();
+        let market = this.market (symbol);
+        let request = {
+            'symbol': market['id'],
+            'order_id': id,
+        };
+        let response = await this.v2GetOrderMakeDetail (this.extend (request, params));
+        //
+        // the above endpoint often returns an empty array
+        //
+        //     { code:   "0",
+        //        msg:   "suc",
+        //       data: [ {      volume: "0.014",
+        //                      symbol: "ethbtc",
+        //                     buy_fee: "0.00001400",
+        //                     orderId:  32235710,
+        //                       price: "0.06923825",
+        //                     created:  1531605169000,
+        //                          id:  3785005,
+        //                      source:  1,
+        //                        type: "buy-limit",
+        //                 bid_user_id:  326317         } ] }
+        //
+        return this.parseTrades (response['data'], market, since, limit);
     }
 
     async fetchOrdersByStatus (status = undefined, symbol = undefined, since = undefined, limit = undefined, params = {}) {
@@ -371,7 +494,15 @@ module.exports = class cointiger extends huobipro {
             'offset': 1,
             'limit': limit,
         }, params));
-        return this.parseOrders (response['data']['list'], market, since, limit);
+        let orders = response['data']['list'];
+        let result = [];
+        for (let i = 0; i < orders.length; i++) {
+            let order = this.extend (orders[i], {
+                'status': status,
+            });
+            result.push (this.parseOrder (order, market, since, limit));
+        }
+        return result;
     }
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
@@ -382,56 +513,168 @@ module.exports = class cointiger extends huobipro {
         return this.fetchOrdersByStatus ('closed', symbol, since, limit, params);
     }
 
+    async fetchOrder (id, symbol = undefined, params = {}) {
+        //
+        //     { code:   "0",
+        //        msg:   "suc",
+        //       data: {      symbol: "ethbtc",
+        //                       fee: "0.00000200",
+        //                 avg_price: "0.06863752",
+        //                    source:  1,
+        //                      type: "buy-limit",
+        //                     mtime:  1531340305000,
+        //                    volume: "0.002",
+        //                   user_id:  326317,
+        //                     price: "0.06863752",
+        //                     ctime:  1531340304000,
+        //               deal_volume: "0.00200000",
+        //                        id:  31920243,
+        //                deal_money: "0.00013727",
+        //                    status:  2              } }
+        //
+        if (typeof symbol === 'undefined') {
+            throw new ExchangeError (this.id + ' fetchOrder requires a symbol argument');
+        }
+        await this.loadMarkets ();
+        let market = this.market (symbol);
+        let request = {
+            'symbol': market['id'],
+            'order_id': id.toString (),
+        };
+        let response = await this.v2GetOrderDetails (this.extend (request, params));
+        return this.parseOrder (response['data'], market);
+    }
+
+    parseOrderStatus (status) {
+        let statuses = {
+            '0': 'open', // pending
+            '1': 'open',
+            '2': 'closed',
+            '3': 'open',
+            '4': 'canceled',
+            '6': 'error',
+        };
+        if (status in statuses)
+            return statuses[status];
+        return status;
+    }
+
     parseOrder (order, market = undefined) {
-        let side = this.safeString (order, 'side');
-        side = side.toLowerCase ();
+        //
+        //  v1
         //
         //      {
         //            volume: { "amount": "0.054", "icon": "", "title": "volume" },
         //         age_price: { "amount": "0.08377697", "icon": "", "title": "Avg price" },
-        //              side:   "BUY",
+        //              side: "BUY",
         //             price: { "amount": "0.00000000", "icon": "", "title": "price" },
-        //        created_at:   1525569480000,
+        //        created_at: 1525569480000,
         //       deal_volume: { "amount": "0.64593598", "icon": "", "title": "Deal volume" },
         //   "remain_volume": { "amount": "1.00000000", "icon": "", "title": "尚未成交"
-        //                id:   26834207,
+        //                id: 26834207,
         //             label: { go: "trade", title: "Traded", click: 1 },
-        //          side_msg:   "Buy"
+        //          side_msg: "Buy"
         //      },
         //
+        //  v2
+        //
+        //     { code:   "0",
+        //        msg:   "suc",
+        //       data: {      symbol: "ethbtc",
+        //                       fee: "0.00000200",
+        //                 avg_price: "0.06863752",
+        //                    source:  1,
+        //                      type: "buy-limit",
+        //                     mtime:  1531340305000,
+        //                    volume: "0.002",
+        //                   user_id:  326317,
+        //                     price: "0.06863752",
+        //                     ctime:  1531340304000,
+        //               deal_volume: "0.00200000",
+        //                        id:  31920243,
+        //                deal_money: "0.00013727",
+        //                    status:  2              } }
+        //
+        let id = this.safeString (order, 'id');
+        let side = this.safeString (order, 'side');
         let type = undefined;
-        let status = undefined;
+        let orderType = this.safeString (order, 'type');
+        let status = this.safeString (order, 'status');
+        let timestamp = this.safeInteger (order, 'created_at');
+        timestamp = this.safeInteger (order, 'ctime', timestamp);
+        let lastTradeTimestamp = this.safeInteger2 (order, 'mtime', 'finished-at');
         let symbol = undefined;
-        if (typeof market !== 'undefined')
+        if (typeof market === 'undefined') {
+            let marketId = this.safeString (order, 'symbol');
+            if (marketId in this.markets_by_id) {
+                market = this.markets_by_id[marketId];
+            }
+        }
+        if (typeof market !== 'undefined') {
             symbol = market['symbol'];
-        let timestamp = order['created_at'];
-        let amount = this.safeFloat (order['volume'], 'amount');
-        let remaining = ('remain_volume' in order) ? this.safeFloat (order['remain_volume'], 'amount') : undefined;
-        let filled = ('deal_volume' in order) ? this.safeFloat (order['deal_volume'], 'amount') : undefined;
-        let price = ('age_price' in order) ? this.safeFloat (order['age_price'], 'amount') : undefined;
-        if (typeof price === 'undefined')
-            price = ('price' in order) ? this.safeFloat (order['price'], 'amount') : undefined;
+        }
+        let remaining = undefined;
+        let amount = undefined;
+        let filled = undefined;
+        let price = undefined;
         let cost = undefined;
+        let fee = undefined;
         let average = undefined;
+        if (typeof side !== 'undefined') {
+            side = side.toLowerCase ();
+            amount = this.safeFloat (order['volume'], 'amount');
+            remaining = ('remain_volume' in order) ? this.safeFloat (order['remain_volume'], 'amount') : undefined;
+            filled = ('deal_volume' in order) ? this.safeFloat (order['deal_volume'], 'amount') : undefined;
+            price = ('price' in order) ? this.safeFloat (order['price'], 'amount') : undefined;
+            average = ('age_price' in order) ? this.safeFloat (order['age_price'], 'amount') : undefined;
+        } else {
+            if (typeof orderType !== 'undefined') {
+                let parts = orderType.split ('-');
+                side = parts[0];
+                type = parts[1];
+                cost = this.safeFloat (order, 'deal_money');
+                price = this.safeFloat (order, 'price');
+                average = this.safeFloat (order, 'avg_price');
+                amount = this.safeFloat2 (order, 'amount', 'volume');
+                filled = this.safeFloat (order, 'deal_volume');
+                let feeCost = this.safeFloat (order, 'fee');
+                if (typeof feeCost !== 'undefined') {
+                    let feeCurrency = undefined;
+                    if (typeof market !== 'undefined') {
+                        if (side === 'buy') {
+                            feeCurrency = market['base'];
+                        } else if (side === 'sell') {
+                            feeCurrency = market['quote'];
+                        }
+                    }
+                    fee = {
+                        'cost': feeCost,
+                        'currency': feeCurrency,
+                    };
+                }
+            }
+            status = this.parseOrderStatus (status);
+        }
         if (typeof amount !== 'undefined') {
             if (typeof remaining !== 'undefined') {
                 if (typeof filled === 'undefined')
-                    filled = amount - remaining;
+                    filled = Math.max (0, amount - remaining);
             } else if (typeof filled !== 'undefined') {
                 cost = filled * price;
-                average = parseFloat (cost / filled);
                 if (typeof remaining === 'undefined')
-                    remaining = amount - filled;
+                    remaining = Math.max (0, amount - filled);
             }
         }
-        if ((typeof remaining !== 'undefined') && (remaining > 0))
-            status = 'open';
+        if (typeof status === 'undefined') {
+            if ((typeof remaining !== 'undefined') && (remaining > 0))
+                status = 'open';
+        }
         let result = {
             'info': order,
-            'id': order['id'].toString (),
+            'id': id,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'lastTradeTimestamp': undefined,
+            'lastTradeTimestamp': lastTradeTimestamp,
             'symbol': symbol,
             'type': type,
             'side': side,
@@ -442,9 +685,26 @@ module.exports = class cointiger extends huobipro {
             'filled': filled,
             'remaining': remaining,
             'status': status,
-            'fee': undefined,
+            'fee': fee,
+            'trades': undefined,
         };
         return result;
+    }
+
+    costToPrecision (symbol, cost) {
+        return this.decimalToPrecision (cost, ROUND, this.markets[symbol]['precision']['price']);
+    }
+
+    priceToPrecision (symbol, price) {
+        return this.decimalToPrecision (price, ROUND, this.markets[symbol]['precision']['price']);
+    }
+
+    amountToPrecision (symbol, amount) {
+        return this.decimalToPrecision (amount, TRUNCATE, this.markets[symbol]['precision']['amount']);
+    }
+
+    feeToPrecision (currency, fee) {
+        return this.decimalToPrecision (fee, ROUND, this.currencies[currency]['precision']);
     }
 
     async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
@@ -478,12 +738,12 @@ module.exports = class cointiger extends huobipro {
         }
         let response = await this.privatePostOrder (this.extend (order, params));
         //
-        //     {"order_id":34343}
+        //     { "order_id":34343 }
         //
         let timestamp = this.milliseconds ();
         return {
             'info': response,
-            'id': response['order_id'].toString (),
+            'id': response['data']['order_id'].toString (),
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'lastTradeTimestamp': undefined,
@@ -506,16 +766,38 @@ module.exports = class cointiger extends huobipro {
         if (typeof symbol === 'undefined')
             throw new ExchangeError (this.id + ' cancelOrder requires a symbol argument');
         let market = this.market (symbol);
-        return await this.privateDeleteOrder (this.extend ({
+        let response = await this.privateDeleteOrder (this.extend ({
             'symbol': market['id'],
             'order_id': id,
         }, params));
+        return {
+            'id': id,
+            'symbol': symbol,
+            'info': response,
+        };
+    }
+
+    async cancelOrders (ids, symbol = undefined, params = {}) {
+        await this.loadMarkets ();
+        if (typeof symbol === 'undefined')
+            throw new ExchangeError (this.id + ' cancelOrders requires a symbol argument');
+        let market = this.market (symbol);
+        let marketId = market['id'];
+        let orderIdList = {};
+        orderIdList[marketId] = ids;
+        let request = {
+            'orderIdList': this.json (orderIdList),
+        };
+        let response = await this.v2PostOrderBatchCancel (this.extend (request, params));
+        return {
+            'info': response,
+        };
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         this.checkRequiredCredentials ();
         let url = this.urls['api'][api] + '/' + this.implodeParams (path, params);
-        if (api === 'private') {
+        if (api === 'private' || api === 'v2') {
             let timestamp = this.milliseconds ().toString ();
             let query = this.keysort (this.extend ({
                 'time': timestamp,
@@ -523,24 +805,23 @@ module.exports = class cointiger extends huobipro {
             let keys = Object.keys (query);
             let auth = '';
             for (let i = 0; i < keys.length; i++) {
-                auth += keys[i] + query[keys[i]];
+                auth += keys[i] + query[keys[i]].toString ();
             }
             auth += this.secret;
             let signature = this.hmac (this.encode (auth), this.encode (this.secret), 'sha512');
-            let isCreateOrderMethod = (path === 'order') && (method === 'POST');
-            let urlParams = isCreateOrderMethod ? {} : query;
+            let urlParams = (method === 'POST') ? {} : query;
             url += '?' + this.urlencode (this.keysort (this.extend ({
                 'api_key': this.apiKey,
                 'time': timestamp,
             }, urlParams)));
-            url += '&sign=' + this.decode (signature);
+            url += '&sign=' + signature;
             if (method === 'POST') {
                 body = this.urlencode (query);
                 headers = {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 };
             }
-        } else if (api === 'public') {
+        } else if (api === 'public' || api === 'v2public') {
             url += '?' + this.urlencode (this.extend ({
                 'api_key': this.apiKey,
             }, params));
@@ -560,28 +841,56 @@ module.exports = class cointiger extends huobipro {
             let response = JSON.parse (body);
             if ('code' in response) {
                 //
-                //     {"code":"100005","msg":"request sign illegal","data":null}
+                //     { "code": "100005", "msg": "request sign illegal", "data": null }
                 //
                 let code = this.safeString (response, 'code');
-                if ((typeof code !== 'undefined') && (code !== '0')) {
+                if (typeof code !== 'undefined') {
                     const message = this.safeString (response, 'msg');
                     const feedback = this.id + ' ' + this.json (response);
-                    const exceptions = this.exceptions;
-                    if (code in exceptions) {
-                        if (code === 2) {
-                            if (message === 'offsetNot Null') {
-                                throw new ExchangeError (feedback);
-                            } else if (message === 'Parameter error') {
-                                throw new ExchangeError (feedback);
+                    if (code !== '0') {
+                        const exceptions = this.exceptions;
+                        if (code in exceptions) {
+                            if (code === '1') {
+                                //
+                                //    {"code":"1","msg":"系统错误","data":null}
+                                //    {“code”:“1",“msg”:“Balance insufficient,余额不足“,”data”:null}
+                                //
+                                if (message.indexOf ('Balance insufficient') >= 0) {
+                                    throw new InsufficientFunds (feedback);
+                                }
+                            } else if (code === '2') {
+                                if (message === 'offsetNot Null') {
+                                    throw new ExchangeError (feedback);
+                                } else if (message === 'Parameter error') {
+                                    throw new ExchangeError (feedback);
+                                }
                             }
+                            throw new exceptions[code] (feedback);
+                        } else {
+                            throw new ExchangeError (this.id + ' unknown "error" value: ' + this.json (response));
                         }
-                        throw new exceptions[code] (feedback);
                     } else {
-                        throw new ExchangeError (this.id + ' unknown "error" value: ' + this.json (response));
+                        //
+                        // Google Translate:
+                        // 订单状态不能取消,订单取消失败 = Order status cannot be canceled
+                        // 根据订单号没有查询到订单,订单取消失败 = The order was not queried according to the order number
+                        //
+                        // {"code":"0","msg":"suc","data":{"success":[],"failed":[{"err-msg":"订单状态不能取消,订单取消失败","order-id":32857051,"err-code":"8"}]}}
+                        // {"code":"0","msg":"suc","data":{"success":[],"failed":[{"err-msg":"Parameter error","order-id":32857050,"err-code":"2"},{"err-msg":"订单状态不能取消,订单取消失败","order-id":32857050,"err-code":"8"}]}}
+                        // {"code":"0","msg":"suc","data":{"success":[],"failed":[{"err-msg":"Parameter error","order-id":98549677,"err-code":"2"},{"err-msg":"根据订单号没有查询到订单,订单取消失败","order-id":98549677,"err-code":"8"}]}}
+                        //
+                        if (feedback.indexOf ('订单状态不能取消,订单取消失败') >= 0) {
+                            if (feedback.indexOf ('Parameter error') >= 0) {
+                                throw new OrderNotFound (feedback);
+                            } else {
+                                throw new InvalidOrder (feedback);
+                            }
+                        } else if (feedback.indexOf ('根据订单号没有查询到订单,订单取消失败') >= 0) {
+                            throw new OrderNotFound (feedback);
+                        }
                     }
                 }
             }
         }
     }
 };
-

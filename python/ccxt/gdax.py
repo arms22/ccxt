@@ -10,6 +10,7 @@ import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import InsufficientFunds
+from ccxt.base.errors import InvalidAddress
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import NotSupported
@@ -21,7 +22,7 @@ class gdax (Exchange):
         return self.deep_extend(super(gdax, self).describe(), {
             'id': 'gdax',
             'name': 'GDAX',
-            'countries': 'US',
+            'countries': ['US'],
             'rateLimit': 1000,
             'userAgent': self.userAgents['chrome'],
             'has': {
@@ -33,6 +34,7 @@ class gdax (Exchange):
                 'fetchOrders': True,
                 'fetchOpenOrders': True,
                 'fetchClosedOrders': True,
+                'fetchDepositAddress': True,
                 'fetchMyTrades': True,
             },
             'timeframes': {
@@ -253,7 +255,7 @@ class gdax (Exchange):
         if timestamp is not None:
             iso8601 = self.iso8601(timestamp)
         symbol = None
-        if not market:
+        if market is None:
             if 'product_id' in trade:
                 marketId = trade['product_id']
                 if marketId in self.markets_by_id:
@@ -262,7 +264,7 @@ class gdax (Exchange):
             symbol = market['symbol']
         feeRate = None
         feeCurrency = None
-        if market:
+        if market is not None:
             feeCurrency = market['quote']
             if 'liquidity' in trade:
                 rateType = 'taker' if (trade['liquidity'] == 'T') else 'maker'
@@ -360,7 +362,7 @@ class gdax (Exchange):
     def parse_order(self, order, market=None):
         timestamp = self.parse8601(order['created_at'])
         symbol = None
-        if not market:
+        if market is None:
             if order['product_id'] in self.markets_by_id:
                 market = self.markets_by_id[order['product_id']]
         status = self.parse_order_status(order['status'])
@@ -414,7 +416,7 @@ class gdax (Exchange):
             'status': 'all',
         }
         market = None
-        if symbol:
+        if symbol is not None:
             market = self.market(symbol)
             request['product_id'] = market['id']
         response = self.privateGetOrders(self.extend(request, params))
@@ -424,7 +426,7 @@ class gdax (Exchange):
         self.load_markets()
         request = {}
         market = None
-        if symbol:
+        if symbol is not None:
             market = self.market(symbol)
             request['product_id'] = market['id']
         response = self.privateGetOrders(self.extend(request, params))
@@ -436,7 +438,7 @@ class gdax (Exchange):
             'status': 'done',
         }
         market = None
-        if symbol:
+        if symbol is not None:
             market = self.market(symbol)
             request['product_id'] = market['id']
         response = self.privateGetOrders(self.extend(request, params))
@@ -556,6 +558,33 @@ class gdax (Exchange):
                 'Content-Type': 'application/json',
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
+
+    def fetch_deposit_address(self, code, params={}):
+        self.load_markets()
+        currency = self.currency(code)
+        accounts = self.safe_value(self.options, 'coinbaseAccounts')
+        if accounts is None:
+            accounts = self.privateGetCoinbaseAccounts()
+            self.options['coinbaseAccounts'] = accounts  # cache it
+            self.options['coinbaseAccountsByCurrencyId'] = self.index_by(accounts, 'currency')
+        currencyId = currency['id']
+        account = self.safe_value(self.options['coinbaseAccountsByCurrencyId'], currencyId)
+        if account is None:
+            # eslint-disable-next-line quotes
+            raise InvalidAddress(self.id + " fetchDepositAddress() could not find currency code " + code + " with id = " + currencyId + " in self.options['coinbaseAccountsByCurrencyId']")
+        response = self.privatePostCoinbaseAccountsIdAddresses(self.extend({
+            'id': account['id'],
+        }, params))
+        address = self.safe_string(response, 'address')
+        # todo: figure self out
+        # tag = self.safe_string(response, 'addressTag')
+        tag = None
+        return {
+            'currency': code,
+            'address': self.check_address(address),
+            'tag': tag,
+            'info': response,
+        }
 
     def handle_errors(self, code, reason, url, method, headers, body):
         if (code == 400) or (code == 404):
