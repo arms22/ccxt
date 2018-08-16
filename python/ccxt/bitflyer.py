@@ -329,7 +329,7 @@ class bitflyer (Exchange):
     def fetch_order(self, id, symbol=None, params={}):
         if symbol is None:
             raise ExchangeError(self.id + ' fetchOrder() requires a symbol argument')
-        orders = self.fetch_orders(symbol)
+        orders = self.fetch_orders(symbol=symbol, params={'child_order_acceptance_id':id})
         ordersById = self.index_by(orders, 'id')
         if id in ordersById:
             return ordersById[id]
