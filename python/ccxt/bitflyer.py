@@ -7,7 +7,6 @@ from ccxt.base.exchange import Exchange
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import OrderNotFound
 
-
 class bitflyer (Exchange):
 
     def describe(self):
@@ -230,8 +229,19 @@ class bitflyer (Exchange):
         result = self.privatePostSendchildorder(self.extend(order, params))
         # {"status": - 200, "error_message": "Insufficient funds", "data": null}
         return {
-            'info': result,
             'id': result['child_order_acceptance_id'],
+            'info': result,
+            'lastTradeTimestamp': None,
+            'status': 'accepted',
+            'symbol': symbol,
+            'type': type,
+            'side': side,
+            'price': price,
+            'cost': 0,
+            'amount': amount,
+            'filled': 0,
+            'remaining': amount,
+            'fee': 0,
         }
 
     def cancel_order(self, id, symbol=None, params={}):
