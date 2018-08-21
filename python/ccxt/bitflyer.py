@@ -236,7 +236,7 @@ class bitflyer (Exchange):
             'symbol': symbol,
             'type': type,
             'side': side,
-            'price': price,
+            'price': price if price is not None else 0,
             'cost': 0,
             'amount': amount,
             'filled': 0,
