@@ -237,6 +237,7 @@ class bitflyer (Exchange):
             'type': type,
             'side': side,
             'price': price if price is not None else 0,
+            'average_price': 0,
             'cost': 0,
             'amount': amount,
             'filled': 0,
@@ -271,6 +272,7 @@ class bitflyer (Exchange):
         remaining = self.safe_float(order, 'outstanding_size')
         filled = self.safe_float(order, 'executed_size')
         price = self.safe_float(order, 'price')
+        average_price = self.safe_float(order, 'average_price')
         cost = price * filled
         status = self.parse_order_status(order['child_order_state'])
         type = order['child_order_type'].lower()
@@ -302,6 +304,7 @@ class bitflyer (Exchange):
             'type': type,
             'side': side,
             'price': price,
+            'average_price': average_price,
             'cost': cost,
             'amount': amount,
             'filled': filled,
