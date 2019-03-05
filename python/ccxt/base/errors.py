@@ -32,6 +32,7 @@ __all__ = [
     'InvalidOrder',
     'OrderNotFound',
     'OrderNotCached',
+    'DuplicateOrderId',
     'NetworkError',
     'DDoSProtection',
     'RequestTimeout',
@@ -39,6 +40,8 @@ __all__ = [
     'InvalidNonce',
     'InvalidAddress',
     'AddressPending',
+    'ArgumentsRequired',
+    'BadRequest',
     'BadResponse',
     'NullResponse',
     'OrderNotFillable',
@@ -63,6 +66,16 @@ class NotSupported(ExchangeError):
     pass
 
 
+class ArgumentsRequired(ExchangeError):
+    """A generic exception raised by unified methods when required arguments are missing."""
+    pass
+
+
+class BadRequest(ExchangeError):
+    """A generic exception raised by the exchange if all or some of required parameters are invalid or missing in URL query or in request body"""
+    pass
+
+
 class BadResponse(ExchangeError):
     """Raised if the endpoint returns a bad response from the exchange API"""
     pass
@@ -80,9 +93,6 @@ class AuthenticationError(ExchangeError):
 
 class PermissionDenied(AuthenticationError):
     """Raised when API credentials are required but missing or wrong"""
-    pass
-
-class NotFound(ExchangeError):
     pass
 
 class AccountSuspended(AuthenticationError):
@@ -117,6 +127,11 @@ class OrderNotFound(InvalidOrder):
 
 class OrderNotCached(InvalidOrder):
     """Raised when the order is not found in local cache (where applicable)"""
+    pass
+
+
+class DuplicateOrderId(InvalidOrder):
+    """Raised when the order id set by client is not unique"""
     pass
 
 

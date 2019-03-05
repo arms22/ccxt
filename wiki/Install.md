@@ -30,13 +30,29 @@ JavaScript version of ccxt works both in Node and web browsers. Requires ES6 and
 npm install ccxt
 ```
 
-Windows users having difficulties installing `w3`, `scrypt` or `node-gyp` dependencies for the ccxt library, follow here: https://github.com/nodejs/node-gyp#on-windows
-
 ```JavaScript
 var ccxt = require ('ccxt')
 
 console.log (ccxt.exchanges) // print all available exchanges
 ```
+
+#### Node.js + Windows
+
+Windows users having difficulties installing `w3`, `scrypt` or `node-gyp` dependencies for the ccxt library, try installing `scrypt` first:
+
+```
+npm install -g web3 --unsafe-perm=true --allow-root
+```
+
+or
+
+```
+sudo npm install -g web3 --unsafe-perm=true --allow-root
+```
+
+Then install ccxt as usual with `npm install ccxt`.
+
+If that does not help, please, follow here: https://github.com/nodejs/node-gyp#on-windows
 
 ### JavaScript (for use with the `<script>` tag):
 
@@ -73,7 +89,7 @@ import ccxt.async_support as ccxt # link against the asynchronous version of ccx
 
 ### PHP
 
-The autoloadable version of ccxt can be installed with [**Packagist/Composer**](https://packagist.org/packages/ccxt/ccxt) (PHP 5.3+).
+The autoloadable version of ccxt can be installed with [**Packagist/Composer**](https://packagist.org/packages/ccxt/ccxt) (PHP 5.4+).
 
 It can also be installed from the source code: [**`ccxt.php`**](https://raw.githubusercontent.com/ccxt/ccxt/master/php)
 
@@ -83,10 +99,28 @@ It requires common PHP modules:
 - mbstring (using UTF-8 is highly recommended)
 - PCRE
 - iconv
+- gmp (this is a built-in extension as of PHP 7.2+)
 
 ```PHP
 include "ccxt.php";
 var_dump (\ccxt\Exchange::$exchanges); // print a list of all available exchange classes
+```
+
+### Docker
+
+You can get CCXT installed in a container along with all the supported languages and dependencies. This may be useful if you want to contribute to CCXT (e.g. run the build scripts and tests — please see the [Contributing](https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md) document for the details on that).
+
+Using `docker-compose` (in the cloned CCXT repository):
+
+```shell
+docker-compose run --rm ccxt
+```
+
+Alternatively:
+
+```shell
+docker build . --tag ccxt
+docker run -it ccxt
 ```
 
 ## Proxy

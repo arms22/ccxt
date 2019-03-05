@@ -42,6 +42,7 @@ module.exports = class lbank extends Exchange {
                 'www': 'https://www.lbank.info',
                 'doc': 'https://github.com/LBank-exchange/lbank-official-api-docs',
                 'fees': 'https://lbankinfo.zendesk.com/hc/zh-cn/articles/115002295114--%E8%B4%B9%E7%8E%87%E8%AF%B4%E6%98%8E',
+                'referral': 'https://www.lbank.info/sign-up.html?icode=7QCY&lang=en-US',
             },
             'api': {
                 'public': {
@@ -61,6 +62,10 @@ module.exports = class lbank extends Exchange {
                         'cancel_order',
                         'orders_info',
                         'orders_info_history',
+                        'withdraw',
+                        'withdrawCancel',
+                        'withdraws',
+                        'withdrawConfigs',
                     ],
                 },
             },
@@ -102,7 +107,7 @@ module.exports = class lbank extends Exchange {
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let markets = await this.publicGetAccuracy ();
         let result = [];
         for (let i = 0; i < markets.length; i++) {
@@ -158,7 +163,7 @@ module.exports = class lbank extends Exchange {
 
     parseTicker (ticker, market = undefined) {
         let symbol = undefined;
-        if (typeof market === 'undefined') {
+        if (market === undefined) {
             let marketId = this.safeString (ticker, 'symbol');
             if (marketId in this.markets_by_id) {
                 let market = this.marketsById[marketId];
@@ -190,7 +195,7 @@ module.exports = class lbank extends Exchange {
         let open = last / this.sum (1, relativeChange);
         let change = last - open;
         let average = this.sum (last, open) / 2;
-        if (typeof market !== 'undefined')
+        if (market !== undefined)
             symbol = market['symbol'];
         return {
             'symbol': symbol,
@@ -241,9 +246,12 @@ module.exports = class lbank extends Exchange {
 
     async fetchOrderBook (symbol, limit = 60, params = {}) {
         await this.loadMarkets ();
+        let size = 60;
+        if (limit !== undefined)
+            size = Math.min (limit, size);
         let response = await this.publicGetDepth (this.extend ({
             'symbol': this.marketId (symbol),
-            'size': Math.min (limit, 60),
+            'size': size,
         }, params));
         return this.parseOrderBook (response);
     }
@@ -277,9 +285,9 @@ module.exports = class lbank extends Exchange {
             'symbol': market['id'],
             'size': 100,
         };
-        if (typeof since !== 'undefined')
-            request['time'] = parseInt (since / 1000);
-        if (typeof limit !== 'undefined')
+        if (since !== undefined)
+            request['time'] = parseInt (since);
+        if (limit !== undefined)
             request['size'] = limit;
         let response = await this.publicGetTrades (this.extend (request, params));
         return this.parseTrades (response, market, since, limit);
@@ -299,9 +307,9 @@ module.exports = class lbank extends Exchange {
     async fetchOHLCV (symbol, timeframe = '5m', since = undefined, limit = 1000, params = {}) {
         await this.loadMarkets ();
         let market = this.market (symbol);
-        if (typeof since === 'undefined')
+        if (since === undefined)
             throw new ExchangeError (this.id + ' fetchOHLCV requires a since argument');
-        if (typeof limit === 'undefined')
+        if (limit === undefined)
             throw new ExchangeError (this.id + ' fetchOHLCV requires a limit argument');
         let request = {
             'symbol': market['id'],
@@ -350,9 +358,9 @@ module.exports = class lbank extends Exchange {
     parseOrder (order, market = undefined) {
         let symbol = undefined;
         let responseMarket = this.safeValue (this.marketsById, order['symbol']);
-        if (typeof responseMarket !== 'undefined') {
+        if (responseMarket !== undefined) {
             symbol = responseMarket['symbol'];
-        } else if (typeof market !== 'undefined') {
+        } else if (market !== undefined) {
             symbol = market['symbol'];
         }
         let timestamp = this.safeInteger (order, 'create_time');
@@ -363,7 +371,7 @@ module.exports = class lbank extends Exchange {
         let filled = this.safeFloat (order, 'deal_amount', 0.0);
         let av_price = this.safeFloat (order, 'avg_price');
         let cost = undefined;
-        if (typeof av_price !== 'undefined') {
+        if (av_price !== undefined) {
             cost = filled * av_price;
         }
         let status = this.parseOrderStatus (this.safeString (order, 'status'));
@@ -441,7 +449,7 @@ module.exports = class lbank extends Exchange {
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        if (typeof limit === 'undefined') {
+        if (limit === undefined) {
             limit = 100;
         }
         let market = this.market (symbol);
@@ -458,6 +466,26 @@ module.exports = class lbank extends Exchange {
         let closed = this.filterBy (orders, 'status', 'closed');
         let cancelled = this.filterBy (orders, 'status', 'cancelled'); // cancelled orders may be partially filled
         return closed + cancelled;
+    }
+
+    async withdraw (code, amount, address, tag = undefined, params = {}) {
+        // mark and fee are optional params, mark is a note and must be less than 255 characters
+        this.checkAddress (address);
+        await this.loadMarkets ();
+        let currency = this.currency (code);
+        let request = {
+            'assetCode': currency['id'],
+            'amount': amount,
+            'account': address,
+        };
+        if (tag !== undefined) {
+            request['memo'] = tag;
+        }
+        let response = this.privatePostWithdraw (this.extend (request, params));
+        return {
+            'id': response['id'],
+            'info': response,
+        };
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
@@ -508,6 +536,7 @@ module.exports = class lbank extends Exchange {
                 '10018': 'order inquiry can not be more than 50 less than one',
                 '10019': 'withdrawal orders can not be more than 3 less than one',
                 '10020': 'less than the minimum amount of the transaction limit of 0.001',
+                '10022': 'Insufficient key authority',
             }, errorCode, this.json (response));
             let ErrorClass = this.safeValue ({
                 '10002': AuthenticationError,
@@ -523,6 +552,7 @@ module.exports = class lbank extends Exchange {
                 '10014': InvalidOrder,
                 '10015': InvalidOrder,
                 '10016': InvalidOrder,
+                '10022': AuthenticationError,
             }, errorCode, ExchangeError);
             throw new ErrorClass (message);
         }

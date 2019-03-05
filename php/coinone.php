@@ -222,6 +222,13 @@ class coinone extends Exchange {
     public function parse_trade ($trade, $market = null) {
         $timestamp = intval ($trade['timestamp']) * 1000;
         $symbol = ($market !== null) ? $market['symbol'] : null;
+        $is_ask = $this->safe_string($trade, 'is_ask');
+        $side = null;
+        if ($is_ask === '1') {
+            $side = 'sell';
+        } else if ($is_ask === '0') {
+            $side = 'buy';
+        }
         return array (
             'id' => null,
             'timestamp' => $timestamp,
@@ -229,7 +236,7 @@ class coinone extends Exchange {
             'order' => null,
             'symbol' => $symbol,
             'type' => null,
-            'side' => null,
+            'side' => $side,
             'price' => $this->safe_float($trade, 'price'),
             'amount' => $this->safe_float($trade, 'qty'),
             'fee' => null,
@@ -259,6 +266,9 @@ class coinone extends Exchange {
         $method = 'privatePostOrder' . $this->capitalize ($type) . $this->capitalize ($side);
         $response = $this->$method (array_merge ($request, $params));
         $id = $this->safe_string($response, 'orderId');
+        if ($id !== null) {
+            $id = strtoupper ($id);
+        }
         $timestamp = $this->milliseconds ();
         $cost = $price * $amount;
         $order = array (
@@ -291,7 +301,7 @@ class coinone extends Exchange {
             if (is_array ($this->orders) && array_key_exists ($id, $this->orders)) {
                 $market = $this->market ($this->orders[$id]['symbol']);
             } else {
-                throw new ExchangeError ($this->id . ' fetchOrder() requires a $symbol argument for order ids missing in the .orders cache (the order was created with a different instance of this class or within a different run of this code).');
+                throw new ArgumentsRequired ($this->id . ' fetchOrder() requires a $symbol argument for order ids missing in the .orders cache (the order was created with a different instance of this class or within a different run of this code).');
             }
         } else {
             $market = $this->market ($symbol);
@@ -332,9 +342,11 @@ class coinone extends Exchange {
     public function parse_order ($order, $market = null) {
         $info = $this->safe_value($order, 'info');
         $id = $this->safe_string($info, 'orderId');
+        if ($id !== null) {
+            $id = strtoupper ($id);
+        }
         $timestamp = intval ($info['timestamp']) * 1000;
-        $status = $this->safe_string($order, 'status');
-        $status = $this->parse_order_status($status);
+        $status = $this->parse_order_status($this->safe_string($order, 'status'));
         $cost = null;
         $side = $this->safe_string($info, 'type');
         if (mb_strpos ($side, 'ask') !== false) {
@@ -460,9 +472,8 @@ class coinone extends Exchange {
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body) {
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
         if (($body[0] === '{') || ($body[0] === '[')) {
-            $response = json_decode ($body, $as_associative_array = true);
             if (is_array ($response) && array_key_exists ('result', $response)) {
                 $result = $response['result'];
                 if ($result !== 'success') {

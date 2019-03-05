@@ -75,23 +75,27 @@ class bxinth (Exchange):
             },
         })
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         markets = await self.publicGetPairing()
         keys = list(markets.keys())
         result = []
         for p in range(0, len(keys)):
             market = markets[keys[p]]
             id = str(market['pairing_id'])
-            base = market['secondary_currency']
-            quote = market['primary_currency']
-            base = self.common_currency_code(base)
-            quote = self.common_currency_code(quote)
+            baseId = market['secondary_currency']
+            quoteId = market['primary_currency']
+            active = market['active']
+            base = self.common_currency_code(baseId)
+            quote = self.common_currency_code(quoteId)
             symbol = base + '/' + quote
             result.append({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
+                'active': active,
                 'info': market,
             })
         return result
@@ -249,7 +253,7 @@ class bxinth (Exchange):
         if symbol is not None:
             market = self.market(symbol)
             request['pairing'] = market['id']
-        response = self.privatePostGetorders(self.extend(request, params))
+        response = await self.privatePostGetorders(self.extend(request, params))
         orders = self.parse_orders(response['orders'], market, since, limit)
         return self.filter_by_symbol(orders, symbol)
 

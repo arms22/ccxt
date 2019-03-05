@@ -53,8 +53,9 @@ class coinfalcon extends Exchange {
             ),
             'fees' => array (
                 'trading' => array (
-                    'maker' => 0.0025,
-                    'taker' => 0.0025,
+                    'tierBased' => true,
+                    'maker' => 0.0,
+                    'taker' => 0.002, // tiered fee starts at 0.2%
                 ),
             ),
             'precision' => array (
@@ -64,7 +65,7 @@ class coinfalcon extends Exchange {
         ));
     }
 
-    public function fetch_markets () {
+    public function fetch_markets ($params = array ()) {
         $response = $this->publicGetMarkets ();
         $markets = $response['data'];
         $result = array ();
@@ -109,10 +110,13 @@ class coinfalcon extends Exchange {
 
     public function parse_ticker ($ticker, $market = null) {
         if ($market === null) {
-            $marketId = $ticker['name'];
-            $market = $this->marketsById[$marketId];
+            $marketId = $this->safe_string($ticker, 'name');
+            $market = $this->safe_value($this->markets_by_id, $marketId, $market);
         }
-        $symbol = $market['symbol'];
+        $symbol = null;
+        if ($market !== null) {
+            $symbol = $market['symbol'];
+        }
         $timestamp = $this->milliseconds ();
         $last = floatval ($ticker['last_price']);
         return array (
@@ -133,19 +137,19 @@ class coinfalcon extends Exchange {
             'change' => floatval ($ticker['change_in_24h']),
             'percentage' => null,
             'average' => null,
-            'baseVolume' => floatval ($ticker['volume']),
-            'quoteVolume' => null,
+            'baseVolume' => null,
+            'quoteVolume' => floatval ($ticker['volume']),
             'info' => $ticker,
         );
     }
 
     public function fetch_ticker ($symbol, $params = array ()) {
-        $this->load_markets();
         $tickers = $this->fetch_tickers($params);
         return $tickers[$symbol];
     }
 
     public function fetch_tickers ($symbols = null, $params = array ()) {
+        $this->load_markets();
         $response = $this->publicGetMarkets ();
         $tickers = $response['data'];
         $result = array ();
@@ -235,11 +239,11 @@ class coinfalcon extends Exchange {
             $symbol = $market['symbol'];
         }
         $timestamp = $this->parse8601 ($order['created_at']);
-        $price = floatval ($order['price']);
+        $price = $this->safe_float($order, 'price');
         $amount = $this->safe_float($order, 'size');
         $filled = $this->safe_float($order, 'size_filled');
-        $remaining = $this->amount_to_precision($symbol, $amount - $filled);
-        $cost = $this->price_to_precision($symbol, $amount * $price);
+        $remaining = floatval ($this->amount_to_precision($symbol, $amount - $filled));
+        $cost = floatval ($this->price_to_precision($symbol, $amount * $price));
         // pending, open, partially_filled, fullfilled, canceled
         $status = $order['status'];
         if ($status === 'fulfilled') {
@@ -272,15 +276,15 @@ class coinfalcon extends Exchange {
     public function create_order ($symbol, $type, $side, $amount, $price = null, $params = array ()) {
         $this->load_markets();
         $market = $this->market ($symbol);
-        // $price/size must be string
-        $amount = $this->amount_to_precision($symbol, floatval ($amount));
+        // price/size must be string
+        $amount = $this->amount_to_precision($symbol, $amount);
         $request = array (
             'market' => $market['id'],
-            'size' => (string) $amount,
+            'size' => $amount,
             'order_type' => $side,
         );
         if ($type === 'limit') {
-            $price = $this->price_to_precision($symbol, floatval ($price));
+            $price = $this->price_to_precision($symbol, $price);
             $request['price'] = (string) $price;
         }
         $request['operation_type'] = $type . '_order';
@@ -357,7 +361,7 @@ class coinfalcon extends Exchange {
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body) {
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
         if ($code < 400) {
             return;
         }
