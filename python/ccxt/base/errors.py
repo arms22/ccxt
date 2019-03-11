@@ -45,6 +45,7 @@ __all__ = [
     'NullResponse',
     'OrderNotFillable',
     'OrderImmediatelyFillable',
+    'NotFound',
 ]
 
 # -----------------------------------------------------------------------------
@@ -173,5 +174,7 @@ class InvalidNonce(NetworkError):
     """Raised in case of a wrong or conflicting nonce number in private requests"""
     pass
 
+class NotFound(ExchangeError):
+    pass
 
 # =============================================================================

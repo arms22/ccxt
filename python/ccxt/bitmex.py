@@ -13,7 +13,7 @@ from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import DDoSProtection
 from ccxt.base.errors import ExchangeNotAvailable
-
+from ccxt.base.errors import NotFound
 
 class bitmex (Exchange):
 
@@ -146,6 +146,7 @@ class bitmex (Exchange):
                     'Access Denied': PermissionDenied,
                     'Duplicate clOrdID': InvalidOrder,
                     'Signature not valid': AuthenticationError,
+                    'Not Found': NotFound,
                 },
                 'broad': {
                     'overloaded': ExchangeNotAvailable,
