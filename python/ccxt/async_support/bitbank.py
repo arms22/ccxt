@@ -53,6 +53,8 @@ class bitbank (Exchange):
             'api': {
                 'public': {
                     'get': [
+                        'spot/pairs',
+                        'spot/status',
                         '{pair}/ticker',
                         '{pair}/depth',
                         '{pair}/transactions',
@@ -329,7 +331,16 @@ class bitbank (Exchange):
             'order_id': id,
             'pair': market['id'],
         }, params))
-        return response['data']
+        return self.parse_order(response['data'])
+
+    async def cancel_orders(self, ids, symbol=None, params={}):
+        await self.load_markets()
+        market = self.market(symbol)
+        response = await self.privatePostUserSpotCancelOrders(self.extend({
+            'order_ids': ids,
+            'pair': market['id'],
+        }, params))
+        return self.parse_orders(response['data']['orders'])
 
     async def fetch_order(self, id, symbol=None, params={}):
         await self.load_markets()
@@ -339,6 +350,15 @@ class bitbank (Exchange):
             'pair': market['id'],
         }, params))
         return self.parse_order(response['data'])
+
+    async def fetch_orders(self, ids, symbol=None, params={}):
+        await self.load_markets()
+        market = self.market(symbol)
+        response = await self.privatePostUserSpotOrdersInfo(self.extend({
+            'order_ids': ids,
+            'pair': market['id'],
+        }, params))
+        return self.parse_orders(response['data']['orders'])
 
     async def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         await self.load_markets()
